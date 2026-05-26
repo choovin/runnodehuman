@@ -5,7 +5,7 @@
 </p>
 
 <h3 align="center">
-  Desktop AI Agent Workspace for Claude Code, Codex, OpenCode, Qwen Code, DeepSeek-TUI, OpenClaw, Hermes Agent, and Custom LLMs
+  Desktop AI Agent Workspace for Local Coding Agents
 </h3>
 
 <p align="center">
@@ -20,22 +20,107 @@
   <strong>English</strong> | <a href="README_zh.md">简体中文</a>
 </p>
 
+WeSight is an open-source desktop control console for local AI agents. It helps you install or reuse Claude Code, Codex, OpenClaw, Hermes Agent, OpenCode, Qwen Code, DeepSeek-TUI, and the built-in agent runtime, then gives them a visual workspace for chat, tools, files, IM channels, skills, model providers, runtime metrics, and desktop companion workflows.
+
 > Early public releases ship macOS Apple Silicon first. If WeSight helps your agent workflow, a Star makes the project easier for more builders to discover.
 
-WeSight is an open-source desktop workspace that brings coding agents, local runtimes, model providers, visual tool execution, skills, scheduled tasks, and memory into one polished product surface.
-
-## ⚡️ Project Vision
-
-WeSight is built for people who want the power of terminal-native agents with a calmer desktop workflow. It can install or reuse Claude Code, Codex, Hermes Agent, OpenCode, Qwen Code, and DeepSeek-TUI, run the managed OpenClaw runtime, map unified model settings into each engine, and present agent work as a visual chat with tool panels, permissions, and long-running task state.
-
-## 📖 Quick Links
+## Quick Links
 
 - Website: [wesight.ai](https://wesight.ai/)
 - Latest release: [github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
-- Agent Engines: [Agent Engines](#agent-engines)
-- Model Configuration: [Model Configuration](#model-configuration)
+- Screenshots: [Screenshots](#screenshots)
+- Core features: [Core Features](#core-features)
+- Agent engines: [Agent Engines](#agent-engines)
 - Development: [Quick Start](#quick-start)
-- Release Workflow: [Release Workflow](#release-workflow)
+
+## Why WeSight
+
+Terminal-native coding agents are powerful, while their setup, model routing, permissions, IM entry points, file changes, and runtime metrics often live in separate places. WeSight turns those moving pieces into one desktop workspace:
+
+- Install, detect, and reuse local agent CLIs from a beginner-friendly UI.
+- Run coding agents through a visual chat with tool panels, slash commands, file diffs, and permission prompts.
+- Connect agent tasks to IM channels such as Feishu, with per-engine configuration.
+- Track every task with engine, model, token usage, TTFT, TPS, tool latency, steps, status, and duration.
+- Extend workflows through SkillHub skills, built-in skills, scheduled tasks, memory, and a desktop pet that follows active work.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="public/readme/screenshots/cowork-chat.png" alt="WeSight Cowork chat">
+    </td>
+    <td width="50%">
+      <img src="public/readme/screenshots/agent-engines.png" alt="WeSight agent engine settings">
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Cowork Chat</strong><br>Run local coding agents as a desktop chat with engine and model controls.</td>
+    <td><strong>Agent Engines</strong><br>Configure Claude Code, Codex, OpenClaw, Hermes Agent, OpenCode, Qwen Code, DeepSeek-TUI, and the built-in runtime.</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="public/readme/screenshots/runtime-dashboard.png" alt="WeSight runtime dashboard">
+    </td>
+    <td width="50%">
+      <img src="public/readme/screenshots/live-workspace.png" alt="WeSight live workspace">
+    </td>
+  </tr>
+  <tr>
+    <td><strong>AI Runtime Dashboard</strong><br>Inspect engine, model, tokens, TTFT, output-phase TPS, estimated model TPS, cost, and status.</td>
+    <td><strong>Live Workspace</strong><br>Watch file writes, code changes, tool activity, and generated artifacts while the agent works.</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="public/readme/screenshots/skills-marketplace.png" alt="WeSight skills marketplace">
+    </td>
+    <td width="50%">
+      <img src="public/readme/screenshots/studio-pet.png" alt="WeSight studio and desktop companion">
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Skills Marketplace</strong><br>Browse SkillHub categories, install skills locally, and manage installed skills from WeSight.</td>
+    <td><strong>Studio & Pet</strong><br>Use a visual office-style workspace and desktop companion to follow active agent tasks.</td>
+  </tr>
+</table>
+
+## Core Features
+
+- **Agent Engines** - Run Claude Code, Codex, OpenClaw, Hermes Agent, OpenCode, Qwen Code, DeepSeek-TUI, or the built-in runtime from the same workspace.
+- **One-click setup** - On macOS, WeSight can install supported local CLIs or detect the ones already present on the machine.
+- **Unified model providers** - Configure official OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Qwen, Moonshot, Ollama, OpenRouter, GitHub Copilot, and custom OpenAI-compatible endpoints.
+- **Local CLI configuration** - Use existing Claude Code, Codex, OpenClaw, Hermes Agent, OpenCode, Qwen Code, or DeepSeek-TUI accounts and config when you already have a working terminal setup.
+- **Graphical tool execution** - View commands, files, permissions, slash commands, outputs, generated images, and tool results inside the chat flow.
+- **IM Agent Hub** - Route Feishu messages into OpenClaw, Hermes Agent, Claude Code, or Codex, with per-engine bot profiles.
+- **AI Runtime Dashboard** - Measure calls by engine, model, source, status, tokens, completion time, TTFT, output-phase TPS, estimated model TPS, tool latency, and agent steps.
+- **Live Workspace** - Open a right-side workspace for live code writing, static diffs, runtime monitoring, task todos, skills, and artifacts.
+- **SkillHub Marketplace** - Discover, categorize, install, enable, disable, update, and remove local WeSight skills.
+- **Scheduled Tasks** - Create recurring agent jobs for research, reports, monitoring, inbox cleanup, and reminders.
+- **Memory and personalization** - Extract useful preferences from conversations and reuse them across future sessions.
+- **Desktop pet and studio** - Keep a lightweight desktop companion and a pixel-style studio view for active tasks.
+
+## Agent Engines
+
+| Engine           | Best For                                                    | Setup Path                                      |
+| ---------------- | ----------------------------------------------------------- | ----------------------------------------------- |
+| Built-in runtime | General desktop cowork sessions and skills                  | Included in WeSight                             |
+| Claude Code      | Claude Code workflows with a graphical chat surface         | One-click install or existing local CLI config  |
+| Codex            | Codex CLI workflows, local task execution, and IM control   | One-click install or existing local CLI config  |
+| OpenClaw         | Runtime gateway, IM channels, sandbox-style agent work      | Local runtime/CLI reuse or WeSight setup flow   |
+| Hermes Agent     | Local Hermes Agent gateway and IM-style runtime experiments | Official installer or existing local CLI config |
+| OpenCode         | OpenCode terminal agent workflows                           | One-click install or existing local CLI config  |
+| Qwen Code        | Qwen-friendly coding workflows and DashScope setups         | One-click install or existing local CLI config  |
+| DeepSeek-TUI     | DeepSeek-TUI HTTP/SSE runtime and tool streaming            | One-click install or existing local CLI config  |
+
+## Model Providers
+
+WeSight keeps model setup in one place, then maps it into the selected engine when that engine follows WeSight settings.
+
+- Add multiple providers and models.
+- Use official OpenAI, Anthropic Claude, and Google Gemini providers.
+- Add OpenAI-compatible providers for DeepSeek, Qwen, Moonshot, Ollama, OpenRouter, GitHub Copilot, local gateways, or private endpoints.
+- Switch between WeSight-managed model settings and existing local CLI configuration.
+- Import or sync local engine configuration when you want WeSight to manage it.
 
 ## Download
 
@@ -45,46 +130,6 @@ Public desktop builds are published through GitHub Releases:
 - Latest release: [github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
 
 Early public releases currently ship macOS Apple Silicon builds first. Release assets are intended for end users. CI artifacts are short-lived build outputs for maintainers to test before a release is published.
-
-## Highlights
-
-- **Multiple agent engines** - Use Claude Code, Codex, OpenCode, Qwen Code, DeepSeek-TUI, OpenClaw, Hermes Agent, or the built-in Claude Agent SDK runner from the same chat workspace.
-- **One-click engine setup** - WeSight can install and prepare supported local CLIs/runtimes for you. Claude Code, Codex, OpenCode, Qwen Code, and DeepSeek-TUI CLI setup prefers npm on macOS; Hermes Agent uses `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`; OpenClaw uses WeSight-managed runtime builders.
-- **Use existing local CLI accounts** - If Claude Code, Codex, Hermes Agent, OpenCode, Qwen Code, or DeepSeek-TUI is already installed and logged in, WeSight can reuse the local CLI configuration instead of forcing a new model setup.
-- **Unified model settings** - Configure OpenAI-compatible providers, Anthropic, DeepSeek, Qwen, Gemini, Moonshot, Ollama, OpenRouter, GitHub Copilot, and custom providers from one settings page.
-- **Graphical chat for CLI agents** - Claude Code, Codex, OpenCode, Qwen Code, and DeepSeek-TUI feel like desktop chat apps: stream output, inspect tool calls, review command results, and continue the same session visually.
-- **Engine switching in context** - Pick an engine when creating a task, then switch from the chat header when the task needs a different runtime.
-- **Permission-aware execution** - File access, shell commands, and sensitive operations surface as reviewable events so you stay in control.
-- **Slash command panels** - Type `/` in chat to open command suggestions and agent context panels for model, status, help, config, skills, memory, and more.
-- **Skills and workflows** - Built-in skills cover web search, Office documents, spreadsheets, presentations, PDF work, Playwright automation, video generation, email, stock research, and more.
-- **Scheduled tasks** - Create recurring agent jobs for research, reports, inbox cleanup, reminders, or automation workflows.
-- **Memory and personalization** - WeSight can extract useful preferences from conversations and reuse them across future sessions.
-- **Desktop companion** - Optional desktop pet in Appearance settings, with animated sprites and lightweight interaction.
-
-## Agent Engines
-
-| Engine                    | Best For                                             | Setup Path                                               |
-| ------------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| Built-in Claude Agent SDK | General local cowork sessions and skill execution    | Included in WeSight                                      |
-| Claude Code               | Claude Code workflows in a graphical chat surface    | macOS one-click CLI install or existing local CLI config |
-| Codex                     | Codex CLI workflows in a graphical chat surface      | macOS one-click CLI install or existing local CLI config |
-| OpenCode                  | OpenCode CLI workflows with model/provider routing   | macOS one-click CLI install or existing local CLI config |
-| Qwen Code                 | Qwen Code CLI workflows and DashScope-friendly setup | macOS one-click CLI install or existing local CLI config |
-| DeepSeek-TUI              | DeepSeek-TUI HTTP/SSE runtime and tool streaming     | macOS one-click CLI install or existing local CLI config |
-| OpenClaw                  | Sandbox-style agent runtime and gateway integrations | WeSight-managed pinned runtime                           |
-| Hermes Agent              | Local Hermes Agent runtime experiments               | Official install.sh, `hermes setup`, or existing CLI config |
-
-## Model Configuration
-
-WeSight has a unified model settings layer for user-facing configuration.
-
-- Add multiple providers and models.
-- Enable or disable providers without editing terminal config files.
-- Map WeSight model settings into Claude Code, Codex, Hermes Agent, OpenCode, Qwen Code, or DeepSeek-TUI when using WeSight-managed configuration.
-- Use local CLI configuration for Claude Code, Codex, Hermes Agent, OpenCode, Qwen Code, or DeepSeek-TUI when you want to keep the account/provider setup already present on your machine.
-- Configure custom OpenAI-compatible endpoints for local, private, or third-party model services.
-
-This lets beginners avoid CLI configuration while still giving advanced users control over their local agent environment.
 
 ## Quick Start
 
@@ -107,14 +152,15 @@ The Vite dev server runs at `http://localhost:5175`.
 ### Development With Agent Runtimes
 
 ```bash
-# Build or reuse the pinned OpenClaw runtime, then start WeSight
-npm run electron:dev:openclaw
+# Start WeSight and detect supported local agent CLIs from Settings
+npm run electron:dev
 
-# Start WeSight; Hermes Agent is detected from the user's local CLI and can be installed from Settings
+# Convenience aliases currently point to the same development entry
+npm run electron:dev:openclaw
 npm run electron:dev:hermes
 ```
 
-Useful runtime environment variables:
+Useful OpenClaw development variables:
 
 ```bash
 # Override OpenClaw source location
@@ -130,8 +176,11 @@ OPENCLAW_SKIP_ENSURE=1 npm run electron:dev:openclaw
 ## Build
 
 ```bash
-# TypeScript + Vite + Electron bundle
+# TypeScript + Vite
 npm run build
+
+# Electron main process
+npm run compile:electron
 
 # ESLint
 npm run lint
@@ -153,34 +202,11 @@ npm run dist:win
 npm run dist:linux
 ```
 
-Managed runtime versions are pinned in `package.json`:
-
-- `openclaw.version`
-
-Windows packages can bundle a portable Python runtime for Python-based skills. OpenClaw runtime folders are generated under `vendor/` and ignored by Git. Hermes Agent is installed or reused from the user's normal local CLI environment.
-
-## Release Workflow
-
-WeSight uses GitHub Releases for desktop distribution.
-
-1. Commit release-ready changes to `main`.
-2. Create and push a version tag, for example:
-
-```bash
-git tag v2026.4.8-alpha.1
-git push origin v2026.4.8-alpha.1
-```
-
-3. The `Build Platforms` workflow builds a macOS Apple Silicon package.
-4. Build artifacts are uploaded to the workflow run for temporary testing.
-5. A draft GitHub Release is created with the generated `.dmg` attached.
-6. Review the draft notes and assets, then publish the release from GitHub.
-
-The website download button can point to the latest release URL so users always land on the newest published build.
+Managed runtime metadata is declared in `package.json`. Generated runtime folders, build artifacts, local secrets, and packaged release output are ignored by Git.
 
 ## Architecture
 
-WeSight uses Electron process isolation. The renderer never directly accesses Node.js APIs; all privileged operations go through a typed preload bridge and IPC handlers in the main process.
+WeSight uses Electron process isolation. The renderer never directly accesses Node.js APIs; privileged operations go through a typed preload bridge and IPC handlers in the main process.
 
 <p align="center">
   <img src="public/readme-architecture.svg" alt="WeSight architecture principle diagram" width="960">
@@ -188,22 +214,19 @@ WeSight uses Electron process isolation. The renderer never directly accesses No
 
 ### Main Process
 
-- Window lifecycle and tray behavior
-- SQLite persistence
-- Agent engine routing
-- Claude Code, Codex, OpenCode, Qwen Code, and DeepSeek-TUI external engine adapters
-- OpenClaw runtime and Hermes local CLI/gateway managers
-- Skill loading and service management
-- Scheduled task engine
-- IM gateway and notification integrations
+- Window lifecycle, tray behavior, desktop pet windows, and deep links
+- SQLite persistence for settings, sessions, messages, runtime calls, skills, and auth tokens
+- Agent engine routing and external CLI adapters
+- OpenClaw and Hermes gateway lifecycle helpers
+- IM gateway integrations and native Feishu routing
+- Skill management, scheduled tasks, file activity tracking, and runtime telemetry
 
 ### Renderer
 
 - React + Redux Toolkit + Tailwind CSS
-- Cowork chat UI
-- Engine selector and model selector
-- Settings, skills, scheduled tasks, agents, MCP, and appearance UI
-- Stream rendering for messages, tool calls, command output, and slash command panels
+- Cowork chat UI, studio view, live workspace, runtime dashboard, and artifacts
+- Engine selector, model selector, settings, skills, MCP, agents, IM, memory, and appearance UI
+- Stream rendering for messages, tool calls, command output, slash command panels, files, images, and permission prompts
 
 ### Key Directories
 
@@ -214,15 +237,13 @@ src/main/
   sqliteStore.ts                  Local persistence
   coworkStore.ts                  Session and message storage
   libs/agentEngine/               Engine adapters and router
-  libs/openclawEngineManager.ts   OpenClaw runtime lifecycle
-  libs/hermesEngineManager.ts     Hermes local CLI and gateway lifecycle
-  libs/externalAgent*.ts          Claude Code, Codex, Hermes Agent, OpenCode, Qwen Code, and DeepSeek-TUI CLI setup/config helpers
+  libs/externalAgent*.ts          External CLI setup and config helpers
   im/                             IM gateway integrations
 
 src/renderer/
   App.tsx                         App shell
-  components/cowork/              Chat, engine selector, model selector, session UI
-  components/Settings.tsx         Model, engine, appearance, skills, memory, and app settings
+  components/cowork/              Chat, studio, activity workspace, engine UI
+  components/Settings.tsx         Model, engine, IM, skills, memory, and app settings
   components/pet/                 Desktop companion UI
   services/                       IPC wrappers and app services
   store/slices/                   Redux state
@@ -234,36 +255,36 @@ src/shared/                       Shared constants and types
 
 ## Built-in Skills
 
-WeSight includes a broad skills library for day-to-day agent work:
+WeSight includes a broad skills library for day-to-day agent work and connects to SkillHub for marketplace installation.
 
-| Area           | Examples                                                           |
-| -------------- | ------------------------------------------------------------------ |
-| Research       | web search, tech news, stock research, film/music search           |
-| Documents      | DOCX, XLSX, PPTX, PDF processing                                   |
-| Automation     | Playwright, local tools, scheduled tasks                           |
-| Creative       | Remotion video, frontend design, canvas design, Seedream, Seedance |
-| Communication  | IMAP/SMTP email                                                    |
-| Agent building | skill creator, skill vetting, custom planning                      |
+| Area           | Examples                                                                  |
+| -------------- | ------------------------------------------------------------------------- |
+| Research       | web search, tech news, stock research, film/music search                  |
+| Documents      | DOCX, XLSX, PPTX, PDF processing                                          |
+| Automation     | Playwright, local tools, scheduled tasks                                  |
+| Creative       | Remotion video, frontend design, canvas design, image and video workflows |
+| Communication  | IMAP/SMTP email and IM channels                                           |
+| Agent building | skill creator, skill vetting, custom planning                             |
 
-Skills can be enabled, disabled, and routed from the desktop UI.
+Skills can be installed, enabled, disabled, deleted, and routed from the desktop UI.
 
 ## Security Model
 
 - Context isolation is enabled.
 - Node integration is disabled in the renderer.
-- Sensitive actions are routed through main-process IPC.
+- Sensitive operations run through main-process IPC.
 - Tool execution can surface permission requests before running.
 - Local data is stored in SQLite under the app data directory.
-- Generated runtime folders, build artifacts, and local secrets are ignored by Git.
+- Runtime folders, build artifacts, generated assets, and local secrets are ignored by Git.
 
 ## Roadmap Ideas
 
 - More engine adapters and runtime profiles
-- Better model migration and provider import flows
+- Better local configuration import and provider sync flows
+- Richer IM agent profiles and message formats
 - Shareable task templates
-- Richer slash command results
 - More visual inspection tools for long-running agent tasks
-- Plugin marketplace for community skills
+- Skill marketplace updates, reviews, and version management
 
 ## Star History
 
