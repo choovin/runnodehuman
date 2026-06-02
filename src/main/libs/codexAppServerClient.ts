@@ -6,6 +6,9 @@ import net from 'net';
 import os from 'os';
 import path from 'path';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const iconv = require('iconv-lite') as typeof import('iconv-lite');
+
 import packageJson from '../../../package.json';
 import type { CodexAppManager } from './codexAppManager';
 
@@ -207,7 +210,20 @@ export class CodexAppServerClient extends EventEmitter {
 
     this.serverProcess = child;
     child.stderr.on('data', (chunk: Buffer) => {
-      this.stderrTail = `${this.stderrTail}${chunk.toString('utf8')}`.slice(-12_000);
+      // On Chinese Windows, the app-server process may output text in the
+      // system's active code page (e.g. GBK/936) instead of UTF-8.  Try UTF-8
+      // first; if the result contains replacement characters (U+FFFD), fall
+      // back to GBK decoding via iconv-lite.
+      let text = chunk.toString('utf8');
+      if (process.platform === 'win32' && text.includes('\uFFFD')) {
+        try {
+          const gbk = iconv.decode(chunk, 'cp936');
+          if (!gbk.includes('\uFFFD')) text = gbk;
+        } catch {
+          // iconv-lite decode failed; keep the UTF-8 attempt
+        }
+      }
+      this.stderrTail = `${this.stderrTail}${text}`.slice(-12_000);
     });
     child.on('error', (error) => {
       this.lastError = error.message;

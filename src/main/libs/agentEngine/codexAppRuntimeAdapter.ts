@@ -5,6 +5,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const iconv = require('iconv-lite') as typeof import('iconv-lite');
+
 import type {
   CoworkMessage,
   CoworkMessageMetadata,
@@ -371,7 +374,18 @@ export class CodexAppRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
 
     active.child.stderr.on('data', (chunk: Buffer) => {
-      active.stderrTail = this.appendStderrTail(active.stderrTail, chunk.toString('utf8'));
+      // On Chinese Windows, the app-server may output text in the system's
+      // code page (e.g. GBK/936). Try UTF-8 first; fall back to GBK.
+      let text = chunk.toString('utf8');
+      if (process.platform === 'win32' && text.includes('\uFFFD')) {
+        try {
+          const gbk = iconv.decode(chunk, 'cp936');
+          if (!gbk.includes('\uFFFD')) text = gbk;
+        } catch {
+          // iconv-lite decode failed; keep UTF-8 attempt
+        }
+      }
+      active.stderrTail = this.appendStderrTail(active.stderrTail, text);
     });
 
     active.child.on('error', (error) => {

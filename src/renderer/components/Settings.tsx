@@ -1,5 +1,5 @@
 import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { ArrowTopRightOnSquareIcon,ChatBubbleLeftIcon, CheckCircleIcon, ClockIcon, Cog6ToothIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, InformationCircleIcon, SignalIcon, UserCircleIcon, UserGroupIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ArrowTopRightOnSquareIcon,ChatBubbleLeftIcon, CheckCircleIcon, ClockIcon, Cog6ToothIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, InformationCircleIcon, SignalIcon, UserCircleIcon, UserGroupIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import {
   ClaudeCodePermissionMode as ClaudeCodePermissionModeValue,
   CoworkAgentEngine as CoworkAgentEngineValue,
@@ -694,6 +694,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   // State for model editing
   const [isAddingModel, setIsAddingModel] = useState(false);
   const [isEditingModel, setIsEditingModel] = useState(false);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [newModelId, setNewModelId] = useState('');
@@ -2156,6 +2157,201 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         models: updatedModels
       }
     }));
+  };
+
+  const handleFetchModels = async () => {
+    const providerKey = activeProvider;
+    const providerConfig = providers[providerKey];
+    setIsFetchingModels(true);
+
+    try {
+      // Check API key for providers that require it
+      if (providerRequiresApiKey(providerKey) && !providerConfig.apiKey) {
+        alert(i18nService.t('getModelListNeedApiKey'));
+        setIsFetchingModels(false);
+        return;
+      }
+
+      // For Ollama, use local API
+      let baseUrl: string;
+      let effectiveApiFormat: 'anthropic' | 'openai' | 'gemini';
+      if (providerKey === 'ollama') {
+        baseUrl = providerConfig.baseUrl || 'http://localhost:11434';
+        effectiveApiFormat = 'openai';
+      } else {
+        effectiveApiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
+        baseUrl = resolveBaseUrl(providerKey, providerConfig.baseUrl, effectiveApiFormat);
+      }
+
+      const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+      let modelsUrl: string;
+      let headers: Record<string, string> = {};
+
+      if (providerKey === 'ollama') {
+        // Ollama: GET /api/tags
+        modelsUrl = `${normalizedBaseUrl}/api/tags`;
+      } else if (providerKey === 'gemini') {
+        // Gemini: use the OpenAI-compatible endpoint if available
+        modelsUrl = `${normalizedBaseUrl}/models`;
+        if (providerConfig.apiKey) {
+          const separator = modelsUrl.includes('?') ? '&' : '?';
+          modelsUrl = `${modelsUrl}${separator}key=${encodeURIComponent(providerConfig.apiKey)}`;
+        }
+      } else {
+        // Build the /v1/models URL
+        if (normalizedBaseUrl.endsWith('/v1')) {
+          modelsUrl = `${normalizedBaseUrl}/models`;
+        } else if (normalizedBaseUrl.includes('/v1/')) {
+          modelsUrl = `${normalizedBaseUrl.replace(/\/v1\/.*$/, '')}/v1/models`;
+        } else {
+          modelsUrl = `${normalizedBaseUrl}/v1/models`;
+        }
+
+        if (providerConfig.apiKey) {
+          if (effectiveApiFormat === 'anthropic') {
+            headers['x-api-key'] = providerConfig.apiKey;
+          } else {
+            headers.Authorization = `Bearer ${providerConfig.apiKey}`;
+          }
+        }
+      }
+
+      const response = await window.electron.api.fetch({
+        url: modelsUrl,
+        method: 'GET',
+        headers,
+      });
+
+      // Anthropic's native API does not expose a /v1/models endpoint.
+      // If the request fails for an Anthropic-format provider, offer a curated
+      // list of well-known Anthropic models as a fallback instead of an error.
+      const isAnthropicNative = effectiveApiFormat === 'anthropic'
+        && (normalizedBaseUrl.includes('api.anthropic.com') || providerKey === 'anthropic');
+
+      if (!response.ok && isAnthropicNative) {
+        const anthropicFallback = [
+          { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+          { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
+          { id: 'claude-haiku-3-5-20251001', name: 'Claude 3.5 Haiku' },
+        ];
+        if (!confirm(i18nService.t('getModelListAnthropicFallback'))) {
+          setIsFetchingModels(false);
+          return;
+        }
+        // Merge fallback models directly
+        const existingModels = providerConfig.models || [];
+        const existingMap = new Map(existingModels.map(m => [m.id, m]));
+        const mergedModels: Array<{ id: string; name: string; supportsImage: boolean }> = anthropicFallback.map(m => ({
+          id: m.id,
+          name: existingMap.get(m.id)?.name || m.name,
+          supportsImage: existingMap.get(m.id)?.supportsImage ?? true,
+        }));
+        for (const existing of existingModels) {
+          if (!anthropicFallback.some(m => m.id === existing.id)) {
+            mergedModels.push({
+              id: existing.id,
+              name: existing.name,
+              supportsImage: existing.supportsImage ?? false,
+            });
+          }
+        }
+        setProviders(prev => ({
+          ...prev,
+          [providerKey]: {
+            ...prev[providerKey],
+            models: mergedModels,
+          },
+        }));
+        setIsFetchingModels(false);
+        return;
+      }
+
+      if (!response.ok) {
+        console.error('[FetchModels] Response not ok:', response.status, response.statusText);
+        alert(i18nService.t('getModelListFailed'));
+        setIsFetchingModels(false);
+        return;
+      }
+
+      let modelList: Array<{ id: string; name?: string }> = [];
+
+      if (providerKey === 'ollama') {
+        // Ollama response: { models: [{ name: string, ... }] }
+        const data = response.data as { models?: Array<{ name: string }> };
+        if (data.models && Array.isArray(data.models)) {
+          modelList = data.models.map(m => ({ id: m.name, name: m.name }));
+        }
+      } else if (providerKey === 'gemini') {
+        // Gemini response: { models: [{ name: string, displayName: string }] }
+        // name format: "models/gemini-pro" → extract "gemini-pro"
+        const data = response.data as { models?: Array<{ name: string; displayName?: string }> };
+        if (data.models && Array.isArray(data.models)) {
+          modelList = data.models
+            .filter(m => m.name && !m.name.includes('embedding') && !m.name.includes('embed'))
+            .map(m => {
+              const id = m.name.replace(/^models\//, '');
+              return { id, name: m.displayName || id };
+            });
+        }
+      } else {
+        // OpenAI-compatible response: { data: [{ id: string, ... }] }
+        const data = response.data as { data?: Array<{ id: string }> };
+        if (data.data && Array.isArray(data.data)) {
+          modelList = data.data.map(m => {
+            const modelName = m.id
+              .replace(/^models\//, '')
+              .replace(/^azureml-/, '')
+              .trim();
+            return { id: m.id, name: modelName };
+          });
+        }
+      }
+
+      if (modelList.length === 0) {
+        alert(i18nService.t('getModelListNoModels'));
+        setIsFetchingModels(false);
+        return;
+      }
+
+      // Merge with existing models, preserving user-edited names
+      const existingModels = providerConfig.models || [];
+      const existingMap = new Map(existingModels.map(m => [m.id, m]));
+
+      const mergedModels: Array<{ id: string; name: string; supportsImage: boolean }> = modelList.map(m => {
+        const existing = existingMap.get(m.id);
+        return {
+          id: m.id,
+          name: existing?.name || m.name || m.id,
+          supportsImage: existing?.supportsImage ?? false,
+        };
+      });
+
+      // Add any user-added models that are not in the fetched list
+      for (const existing of existingModels) {
+        if (!modelList.some(m => m.id === existing.id)) {
+          mergedModels.push({
+            id: existing.id,
+            name: existing.name,
+            supportsImage: existing.supportsImage ?? false,
+          });
+        }
+      }
+
+      setProviders(prev => ({
+        ...prev,
+        [providerKey]: {
+          ...prev[providerKey],
+          models: mergedModels,
+        },
+      }));
+
+      alert(i18nService.t('getModelListSuccess').replace('{count}', String(modelList.length)));
+    } catch (e) {
+      console.error('[FetchModels] Error:', e);
+      alert(i18nService.t('getModelListFailed'));
+    } finally {
+      setIsFetchingModels(false);
+    }
   };
 
   const handleSaveNewModel = () => {
@@ -5365,14 +5561,26 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                   <h3 className="text-xs font-medium text-foreground">
                     {i18nService.t('availableModels')}
                   </h3>
-                  <button
-                    type="button"
-                    onClick={handleAddModel}
-                    className="inline-flex items-center text-xs text-primary hover:text-primary-hover"
-                  >
-                    <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
-                    {i18nService.t('addModel')}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleFetchModels}
+                      disabled={isFetchingModels}
+                      className="inline-flex items-center text-xs text-secondary hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title={i18nService.t('getModelList')}
+                    >
+                      <ArrowPathIcon className={`h-3.5 w-3.5 mr-1 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                      {isFetchingModels ? i18nService.t('gettingModelList') : i18nService.t('getModelList')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddModel}
+                      className="inline-flex items-center text-xs text-primary hover:text-primary-hover"
+                    >
+                      <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
+                      {i18nService.t('addModel')}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Models List */}

@@ -277,11 +277,22 @@ export const atomicWriteJson = (filePath: string, value: Record<string, unknown>
 };
 
 export const buildOpenClawCommandPath = (): string => {
+  const homePath = os.homedir();
+  const basePaths = process.platform === 'win32'
+    ? [
+        path.join(homePath, 'AppData', 'Roaming', 'npm'),
+        path.join(homePath, 'AppData', 'Local', 'pnpm'),
+        path.join(homePath, '.npm-global', 'bin'),
+        path.join(homePath, '.local', 'bin'),
+      ]
+    : [
+        path.join(homePath, '.npm-global', 'bin'),
+        path.join(homePath, '.local', 'bin'),
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+      ];
   return [
-    path.join(os.homedir(), '.npm-global', 'bin'),
-    path.join(os.homedir(), '.local', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
+    ...basePaths,
     process.env.PATH ?? '',
   ]
     .filter(Boolean)
@@ -292,26 +303,67 @@ const quoteForShell = (value: string): string => {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 };
 
-const candidateCommandPaths = (): string[] => [
-  path.join(os.homedir(), '.npm-global', 'bin', 'openclaw'),
-  path.join(os.homedir(), '.local', 'bin', 'openclaw'),
-  '/opt/homebrew/bin/openclaw',
-  '/usr/local/bin/openclaw',
-];
+const candidateCommandPaths = (): string[] => {
+  const homePath = os.homedir();
+  if (process.platform === 'win32') {
+    return [
+      path.join(homePath, 'AppData', 'Roaming', 'npm', 'openclaw.cmd'),
+      path.join(homePath, 'AppData', 'Roaming', 'npm', 'openclaw'),
+      path.join(homePath, 'AppData', 'Roaming', 'npm', 'openclaw.exe'),
+      path.join(homePath, 'AppData', 'Local', 'pnpm', 'openclaw.cmd'),
+      path.join(homePath, 'AppData', 'Local', 'pnpm', 'openclaw'),
+      path.join(homePath, '.npm-global', 'bin', 'openclaw.cmd'),
+      path.join(homePath, '.npm-global', 'bin', 'openclaw'),
+      path.join(homePath, '.local', 'bin', 'openclaw.cmd'),
+      path.join(homePath, '.local', 'bin', 'openclaw'),
+    ];
+  }
+  return [
+    path.join(homePath, '.npm-global', 'bin', 'openclaw'),
+    path.join(homePath, '.local', 'bin', 'openclaw'),
+    '/opt/homebrew/bin/openclaw',
+    '/usr/local/bin/openclaw',
+  ];
+};
 
 export const resolveOpenClawCommandPath = (): string | null => {
-  const shellPath = process.env.SHELL || '/bin/zsh';
-  const result = spawnSync(shellPath, ['-lc', `command -v ${quoteForShell('openclaw')}`], {
-    encoding: 'utf8',
-    timeout: 10_000,
-    env: {
-      ...process.env,
-      PATH: buildOpenClawCommandPath(),
-    },
-  });
-  if (result.status === 0) {
-    const resolved = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-    if (resolved) return resolved;
+  if (process.platform === 'win32') {
+    // On Windows, use `where` to locate the openclaw command.
+    // `where` output is in the system code page, so use buffer encoding
+    // and decode with the same GBK-aware logic as other spawns.
+    for (const cmd of ['openclaw', 'openclaw.cmd']) {
+      const result = spawnSync('where', [cmd], {
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          PATH: buildOpenClawCommandPath(),
+        },
+      });
+      // where returns 0 on success, 1 if not found
+      if (result.status === 0 && result.stdout) {
+        const output = result.stdout.toString('utf8');
+        const resolved = output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line && /openclaw(?:\.(?:cmd|exe))?$/i.test(line));
+        if (resolved && fs.existsSync(resolved)) return resolved;
+      }
+    }
+  } else {
+    // On macOS / Linux, use the POSIX shell approach.
+    const shellPath = process.env.SHELL || '/bin/zsh';
+    const result = spawnSync(shellPath, ['-lc', `command -v ${quoteForShell('openclaw')}`], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        PATH: buildOpenClawCommandPath(),
+      },
+    });
+    if (result.status === 0) {
+      const resolved = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+      if (resolved) return resolved;
+    }
   }
 
   return candidateCommandPaths().find((candidate) => {
@@ -433,13 +485,20 @@ export const resolveOpenClawSystemRuntime = (): OpenClawSystemRuntimeMetadata =>
     gatewayToken: summary.gatewayToken,
     clientEntryPath: findGatewayClientEntry(packageRoot),
     currentModel: summary.currentModel,
-    expectedPathHint: [
-      'PATH/openclaw',
-      '~/.npm-global/bin/openclaw',
-      '~/.local/bin/openclaw',
-      '/opt/homebrew/bin/openclaw',
-      '/usr/local/bin/openclaw',
-    ].join(', '),
+    expectedPathHint: process.platform === 'win32'
+      ? [
+          'PATH\\openclaw.cmd',
+          '%APPDATA%\\npm\\openclaw.cmd',
+          '%LOCALAPPDATA%\\pnpm\\openclaw.cmd',
+          '~\\.npm-global\\bin\\openclaw.cmd',
+        ].join(', ')
+      : [
+          'PATH/openclaw',
+          '~/.npm-global/bin/openclaw',
+          '~/.local/bin/openclaw',
+          '/opt/homebrew/bin/openclaw',
+          '/usr/local/bin/openclaw',
+        ].join(', '),
   };
 };
 

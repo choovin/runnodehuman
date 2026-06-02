@@ -3,6 +3,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const iconv = require('iconv-lite') as typeof import('iconv-lite');
+
 import { getCodexAppServerSocketPath } from './codexAppServerClient';
 
 export const CodexAppStatusPhase = {
@@ -35,9 +38,80 @@ const START_WAIT_INTERVAL_MS = 500;
 
 const quoteForShell = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
-const resolveCommand = (command: string): { path: string | null; error: string | null } => {
-  const result = spawnSync(process.platform === 'win32' ? 'where' : 'which', [command], {
+/**
+ * Decode a Buffer from a Windows child process, which may use the system's
+ * active code page (e.g. GBK/936 on Chinese Windows) instead of UTF-8.
+ *
+ * Node's spawnSync with encoding:'utf8' blindly calls buf.toString('utf8'),
+ * producing garbled characters (mojibake) when the actual encoding is GBK.
+ * This helper tries UTF-8 first; if the result contains replacement characters
+ * (U+FFFD), it falls back to the Windows ANSI code page (typically GBK/936).
+ */
+const decodeWindowsOutput = (buf: Buffer): string => {
+  if (!Buffer.isBuffer(buf) || buf.length === 0) return '';
+  const utf8 = buf.toString('utf8');
+  // On modern Windows 10/11 with UTF-8 beta support enabled, the output
+  // may already be valid UTF-8.
+  if (!utf8.includes('\uFFFD')) return utf8;
+
+  // Fall back to the system's legacy ANSI code page (GBK on Chinese Windows).
+  try {
+    // cp936 = GBK (Simplified Chinese), the most common non-UTF-8 code page
+    const gbk = iconv.decode(buf, 'cp936');
+    // If GBK decoding also produces replacement chars, just return the UTF-8
+    // version anyway — it's the best we can do without knowing the exact locale.
+    if (!gbk.includes('\uFFFD')) return gbk;
+  } catch {
+    // iconv-lite decode failed; return UTF-8 attempt
+  }
+  return utf8;
+};
+
+/**
+ * Thin wrapper around spawnSync that decodes stdout/stderr from Buffer using
+ * Windows-aware encoding on win32, and plain UTF-8 on other platforms.
+ *
+ * On Windows, the `encoding` option is forced to `'buffer'` so that raw bytes
+ * are returned.  The caller's stdout/stderr will be strings decoded via
+ * {@link decodeWindowsOutput}.
+ */
+const spawnSyncSafe = (
+  command: string,
+  args: string[],
+  options: Parameters<typeof spawnSync>[2] = {},
+): { stdout: string; stderr: string; status: number | null; error?: Error } => {
+  if (process.platform === 'win32') {
+    // Force buffer output on Windows to avoid garbled UTF-8 decoding.
+    // Node's spawnSync returns Buffer when encoding is omitted or set to
+    // 'buffer', but TypeScript's type defs don't narrow this correctly.
+    const result = spawnSync(command, args, {
+      ...options,
+      encoding: 'buffer' as BufferEncoding,
+    });
+    const stdout = decodeWindowsOutput(result.stdout as unknown as Buffer);
+    const stderr = decodeWindowsOutput(result.stderr as unknown as Buffer);
+    return {
+      stdout,
+      stderr,
+      status: result.status,
+      error: result.error,
+    };
+  }
+  // On macOS / Linux, UTF-8 is universal
+  const result = spawnSync(command, args, {
+    ...options,
     encoding: 'utf8',
+  });
+  return {
+    stdout: (result.stdout ?? '').toString(),
+    stderr: (result.stderr ?? '').toString(),
+    status: result.status,
+    error: result.error,
+  };
+};
+
+const resolveCommand = (command: string): { path: string | null; error: string | null } => {
+  const result = spawnSyncSafe(process.platform === 'win32' ? 'where' : 'which', [command], {
     shell: false,
     timeout: COMMAND_TIMEOUT_MS,
   });
@@ -75,8 +149,7 @@ const resolveCommand = (command: string): { path: string | null; error: string |
 };
 
 const readCommandVersion = (commandPath: string): string | null => {
-  const result = spawnSync(commandPath, ['--version'], {
-    encoding: 'utf8',
+  const result = spawnSyncSafe(commandPath, ['--version'], {
     shell: false,
     timeout: COMMAND_TIMEOUT_MS,
   });
@@ -85,8 +158,7 @@ const readCommandVersion = (commandPath: string): string | null => {
 };
 
 const supportsAppServer = (commandPath: string): boolean => {
-  const result = spawnSync(commandPath, ['app-server', '--help'], {
-    encoding: 'utf8',
+  const result = spawnSyncSafe(commandPath, ['app-server', '--help'], {
     shell: false,
     timeout: COMMAND_TIMEOUT_MS,
   });
