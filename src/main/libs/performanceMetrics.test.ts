@@ -89,6 +89,7 @@ test('keeps a bounded slow DB operation ring buffer', () => {
 
 test('aggregates settings performance metrics', () => {
   resetPerformanceMetricsForTesting();
+  const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
   recordSettingsMetric({
     type: 'open',
@@ -118,10 +119,26 @@ test('aggregates settings performance metrics', () => {
     totalDurationMs: 125,
     maxDurationMs: 125,
   });
+  expect(snapshot.settings.byOperation.open).toMatchObject({
+    count: 1,
+    totalDurationMs: 42,
+    maxDurationMs: 42,
+  });
+  expect(snapshot.settings.byOperation['ipc:im:openclaw:config-schema']).toMatchObject({
+    count: 1,
+    totalDurationMs: 125,
+    maxDurationMs: 125,
+  });
   expect(snapshot.settings.recentEvents[1]).toMatchObject({
     type: 'ipc',
     channel: 'im:openclaw:config-schema',
     success: false,
     triggeredRuntimeStart: false,
   });
+  expect(debugSpy).toHaveBeenCalledWith(
+    expect.stringContaining('settings ipc:im:openclaw:config-schema took 125ms.')
+  );
+  expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('tab=im.'));
+
+  debugSpy.mockRestore();
 });

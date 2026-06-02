@@ -118,6 +118,11 @@ export interface PerformanceSnapshot {
       totalDurationMs: number;
       maxDurationMs: number;
     }>;
+    byOperation: Record<string, {
+      count: number;
+      totalDurationMs: number;
+      maxDurationMs: number;
+    }>;
   };
 }
 
@@ -159,6 +164,11 @@ const dbByOperation = new Map<string, {
 const slowDbOperations: DbSlowOperation[] = [];
 const settingsMetrics: SettingsMetric[] = [];
 const settingsByType = new Map<string, {
+  count: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+}>();
+const settingsByOperation = new Map<string, {
   count: number;
   totalDurationMs: number;
   maxDurationMs: number;
@@ -322,9 +332,49 @@ export function recordSettingsMetric(input: Omit<SettingsMetric, 'durationMs' | 
   summary.maxDurationMs = Math.max(summary.maxDurationMs, metric.durationMs);
   settingsByType.set(metric.type, summary);
 
+  const operationKey = getSettingsOperationKey(metric);
+  const operationSummary = settingsByOperation.get(operationKey) ?? {
+    count: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+  };
+  operationSummary.count += 1;
+  operationSummary.totalDurationMs += metric.durationMs;
+  operationSummary.maxDurationMs = Math.max(operationSummary.maxDurationMs, metric.durationMs);
+  settingsByOperation.set(operationKey, operationSummary);
+
   if (metric.durationMs >= 100) {
-    console.debug(`[Performance] settings ${metric.type} took ${metric.durationMs}ms.`);
+    console.debug(buildSettingsMetricLogMessage(metric, operationKey));
   }
+}
+
+function getSettingsOperationKey(metric: SettingsMetric): string {
+  if (metric.type === 'ipc') {
+    return metric.channel ? `ipc:${metric.channel}` : 'ipc:unknown';
+  }
+  if (metric.type === 'tabLoad') {
+    return metric.tab ? `tabLoad:${metric.tab}` : 'tabLoad:unknown';
+  }
+  return metric.type;
+}
+
+function buildSettingsMetricLogMessage(metric: SettingsMetric, operationKey: string): string {
+  const parts = [
+    `[Performance] settings ${operationKey} took ${metric.durationMs}ms.`,
+  ];
+  if (metric.tab) {
+    parts.push(`tab=${metric.tab}.`);
+  }
+  if (metric.success === false) {
+    parts.push('success=false.');
+  }
+  if (metric.triggeredRuntimeStart === true) {
+    parts.push('runtimeStart=true.');
+  }
+  if (metric.error) {
+    parts.push(`error=${metric.error}.`);
+  }
+  return parts.join(' ');
 }
 
 export function measureDbOperation<T>(
@@ -360,6 +410,7 @@ export function resetPerformanceMetricsForTesting(): void {
   slowDbOperations.length = 0;
   settingsMetrics.length = 0;
   settingsByType.clear();
+  settingsByOperation.clear();
   totalIpcEvents = 0;
   totalIpcPayloadBytes = 0;
   maxIpcPayloadBytes = 0;
@@ -402,6 +453,15 @@ export function getPerformanceSnapshot(
     };
   }
 
+  const settingsByOperationSnapshot: PerformanceSnapshot['settings']['byOperation'] = {};
+  for (const [operation, summary] of settingsByOperation.entries()) {
+    settingsByOperationSnapshot[operation] = {
+      count: summary.count,
+      totalDurationMs: Math.round(summary.totalDurationMs),
+      maxDurationMs: Math.round(summary.maxDurationMs),
+    };
+  }
+
   return {
     sampledAt: new Date().toISOString(),
     uptimeMs: Math.round(performance.now() - processStartedAt),
@@ -425,6 +485,7 @@ export function getPerformanceSnapshot(
       totalEvents: settingsMetricCount,
       recentEvents: [...settingsMetrics],
       byType: settingsByTypeSnapshot,
+      byOperation: settingsByOperationSnapshot,
     },
   };
 }

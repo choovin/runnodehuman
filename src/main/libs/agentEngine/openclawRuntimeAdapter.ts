@@ -661,6 +661,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private lastStoreUpdateTime: Map<string, number> = new Map();
   private pendingStoreUpdateTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private static readonly STORE_UPDATE_THROTTLE_MS = 250;
+  private lastBackgroundGatewayUnavailableLogAt = 0;
+  private static readonly BACKGROUND_GATEWAY_UNAVAILABLE_LOG_INTERVAL_MS = 60_000;
 
   /**
    * Server-side agent timeout in seconds (mirrors agents.defaults.timeoutSeconds in openclaw config).
@@ -867,17 +869,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * so that channel-originated events can be received without waiting
    * for a WeSight-initiated session.
    */
-  async connectGatewayIfNeeded(): Promise<void> {
+  async connectGatewayIfNeeded(): Promise<boolean> {
     if (this.gatewayClient) {
       console.log('[ChannelSync] connectGatewayIfNeeded: gateway client already exists, skipping');
-      return;
+      return true;
+    }
+    if (this.shouldSkipBackgroundGatewayConnect()) {
+      return false;
     }
     console.log('[ChannelSync] connectGatewayIfNeeded: no gateway client, initializing...');
     try {
       await this.ensureGatewayClientReady();
       console.log('[ChannelSync] connectGatewayIfNeeded: gateway client ready, starting channel polling');
       this.startChannelPolling();
+      return true;
     } catch (error) {
+      if (this.shouldSuppressBackgroundGatewayError(error)) {
+        this.logBackgroundGatewayUnavailable();
+        return false;
+      }
       console.error('[ChannelSync] connectGatewayIfNeeded: failed to initialize gateway client:', error);
       throw error;
     }
@@ -889,17 +899,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Unlike `connectGatewayIfNeeded`, this always tears down the old client first
    * to avoid a race where the old client's `onClose` fires after a new client is created.
    */
-  async reconnectGateway(): Promise<void> {
+  async reconnectGateway(): Promise<boolean> {
     console.log('[ChannelSync] reconnectGateway: tearing down old client and reconnecting...');
     this.stopGatewayClient();
+    if (this.shouldSkipBackgroundGatewayConnect()) {
+      return false;
+    }
     try {
       await this.ensureGatewayClientReady();
       console.log('[ChannelSync] reconnectGateway: gateway client ready, starting channel polling');
       this.startChannelPolling();
+      return true;
     } catch (error) {
+      if (this.shouldSuppressBackgroundGatewayError(error)) {
+        this.logBackgroundGatewayUnavailable();
+        return false;
+      }
       console.error('[ChannelSync] reconnectGateway: failed to initialize gateway client:', error);
       throw error;
     }
+  }
+
+  private shouldSkipBackgroundGatewayConnect(): boolean {
+    const status = this.engineManager.getStatus();
+    if (status.phase !== 'not_installed') {
+      return false;
+    }
+    this.logBackgroundGatewayUnavailable();
+    return true;
+  }
+
+  private shouldSuppressBackgroundGatewayError(error: unknown): boolean {
+    const status = this.engineManager.getStatus();
+    if (status.phase === 'not_installed') {
+      return true;
+    }
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return /OpenClaw CLI was not found|OpenClaw CLI is not installed/i.test(message);
+  }
+
+  private logBackgroundGatewayUnavailable(): void {
+    const now = Date.now();
+    if (
+      now - this.lastBackgroundGatewayUnavailableLogAt
+      < OpenClawRuntimeAdapter.BACKGROUND_GATEWAY_UNAVAILABLE_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.lastBackgroundGatewayUnavailableLogAt = now;
+    const message = this.engineManager.getStatus().message || 'OpenClaw CLI is not installed.';
+    console.debug(`[ChannelSync] skipped background gateway connection because ${message}`);
   }
 
   /**
@@ -1913,7 +1962,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     console.log(`[GatewayReconnect] attempting reconnect (attempt ${this.gatewayReconnectAttempt})`);
     try {
       // connectGatewayIfNeeded checks if client already exists, so safe to call
-      await this.connectGatewayIfNeeded();
+      const connected = await this.connectGatewayIfNeeded();
+      if (!connected) {
+        console.debug('[GatewayReconnect] reconnect skipped because the gateway is unavailable.');
+        return;
+      }
       console.log('[GatewayReconnect] reconnected successfully');
       this.gatewayReconnectAttempt = 0; // reset counter on success
     } catch (error) {
