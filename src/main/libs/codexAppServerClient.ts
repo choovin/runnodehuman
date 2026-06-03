@@ -6,7 +6,7 @@ import net from 'net';
 import os from 'os';
 import path from 'path';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+ 
 const iconv = require('iconv-lite') as typeof import('iconv-lite');
 
 import packageJson from '../../../package.json';

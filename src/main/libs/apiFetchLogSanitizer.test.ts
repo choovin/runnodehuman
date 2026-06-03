@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+
 import { formatApiFetchLogPayload, sanitizeApiFetchLogValue } from './apiFetchLogSanitizer';
 
 test('sanitizeApiFetchLogValue redacts authorization headers', () => {

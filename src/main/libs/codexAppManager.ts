@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+ 
 const iconv = require('iconv-lite') as typeof import('iconv-lite');
 
 import { getCodexAppServerSocketPath } from './codexAppServerClient';

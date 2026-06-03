@@ -1,6 +1,7 @@
 import React from 'react';
+
+import type { AppUpdateDownloadProgress,AppUpdateInfo } from '../../services/appUpdate';
 import { i18nService } from '../../services/i18n';
-import type { AppUpdateInfo, AppUpdateDownloadProgress } from '../../services/appUpdate';
 import Modal from '../common/Modal';
 
 export type UpdateModalState = 'info' | 'downloading' | 'installing' | 'error';

@@ -1,11 +1,11 @@
-import type { IMMediaAttachment, IMMessage } from './types';
-import { IMChatHandler } from './imChatHandler';
-import { buildOpenClawLocalTimeContextPrompt } from '../libs/openclawLocalTimeContextPrompt';
 import {
-  parseSimpleScheduledReminderText,
   parseLegacyScheduledReminderSystemMessage,
   parseScheduledReminderPrompt,
+  parseSimpleScheduledReminderText,
 } from '../../scheduledTask/reminderText';
+import { buildOpenClawLocalTimeContextPrompt } from '../libs/openclawLocalTimeContextPrompt';
+import { IMChatHandler } from './imChatHandler';
+import type { IMMediaAttachment, IMMessage } from './types';
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');

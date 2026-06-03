@@ -1,5 +1,7 @@
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { createHash,randomBytes, randomUUID } from "node:crypto";
+
 import { shell } from 'electron';
+
 import { t } from '../i18n';
 
 // PKCE (Proof Key for Code Exchange) helpers - exactly matching OpenClaw implementation
