@@ -326,6 +326,7 @@ const AgentEnvironmentSetup: React.FC<AgentEnvironmentSetupProps> = ({
     const progress = installProgress[target.appType];
     const isSelected = target.engine === effectiveSelectedEngine;
     const isInstalling = installingAppType === target.appType;
+    const checked = Boolean(status);
     const found = Boolean(status?.found);
     const percent = getProgressPercent(progress?.phase);
     const progressMessage = progress?.detail
@@ -368,10 +369,24 @@ const AgentEnvironmentSetup: React.FC<AgentEnvironmentSetupProps> = ({
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 ${
             found
               ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+              : !checked
+                ? 'bg-primary/10 text-primary'
               : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
           }`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${found ? 'bg-green-500' : 'bg-amber-500'}`} />
-            {i18nService.t(found ? 'coworkAgentEngineCliInstalled' : 'coworkAgentEngineCliMissing')}
+            <span className={`h-1.5 w-1.5 rounded-full ${
+              found
+                ? 'bg-green-500'
+                : !checked
+                  ? 'bg-primary animate-pulse'
+                  : 'bg-amber-500'
+            }`} />
+            {i18nService.t(
+              found
+                ? 'coworkAgentEngineCliInstalled'
+                : !checked
+                  ? 'coworkAgentEngineCliChecking'
+                  : 'coworkAgentEngineCliMissing'
+            )}
           </span>
           {status?.version && (
             <span className="max-w-[180px] truncate rounded-full bg-background px-2 py-1 font-mono text-[11px] text-secondary">
@@ -397,7 +412,7 @@ const AgentEnvironmentSetup: React.FC<AgentEnvironmentSetupProps> = ({
           </div>
         )}
 
-        {!found && (
+        {checked && !found && (
           <div className="mt-3" onClick={(event) => event.stopPropagation()}>
             {isSupportedInstallPlatform ? (
               <button

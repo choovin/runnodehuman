@@ -162,8 +162,14 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
   React.useEffect(() => {
     let mounted = true;
     const appType = getCliAppTypeForEngine(effectiveEngine);
+    if (!appType) {
+      setSnapshot(null);
+      return () => {
+        mounted = false;
+      };
+    }
     coworkService.getAgentEngineSnapshot({
-      appTypes: appType ? [appType] : undefined,
+      appTypes: [appType],
     })
       .then((nextSnapshot) => {
         if (mounted) {
@@ -233,10 +239,14 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
       const ok = await coworkService.updateConfig({ agentEngine: engine });
       if (ok) {
         const appType = getCliAppTypeForEngine(engine);
-        const nextSnapshot = await coworkService.getAgentEngineSnapshot({
-          appTypes: appType ? [appType] : undefined,
-        });
-        setSnapshot(nextSnapshot);
+        if (appType) {
+          const nextSnapshot = await coworkService.getAgentEngineSnapshot({
+            appTypes: [appType],
+          });
+          setSnapshot(nextSnapshot);
+        } else {
+          setSnapshot(null);
+        }
         setIsOpen(false);
       } else {
         setSwitchError(i18nService.t('coworkAgentEngineSwitchFailed'));
