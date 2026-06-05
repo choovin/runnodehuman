@@ -13,6 +13,7 @@ export default defineConfig({
   define: {
     // KaTeX ESM bundle references this compile-time constant.
     __VERSION__: JSON.stringify(katexVersion),
+    'import.meta.env.VITE_CLOUD_API_BASE_URL': JSON.stringify(process.env.VITE_CLOUD_API_BASE_URL || ''),
   },
   plugins: [
     react(),

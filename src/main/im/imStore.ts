@@ -3,7 +3,7 @@
  * SQLite operations for IM configuration storage
  */
 
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 
 import {
   FEISHU_ENGINE_KEYS,

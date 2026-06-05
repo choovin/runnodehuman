@@ -191,7 +191,7 @@
   "asarUnpack": [
     "node_modules/@anthropic-ai/claude-agent-sdk/**",
     "node_modules/@img/**",
-    "node_modules/better-sqlite3/**",
+    "**/node_modules/better-sqlite3-multiple-ciphers/build/Release/*.node",
     "node_modules/node-nim/**",
     "node_modules/npm/**"
   ],

@@ -4,7 +4,7 @@
  * Most IM platforms run through OpenClaw; Feishu follows the global agent engine.
  */
 
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { EventEmitter } from 'events';
 
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
