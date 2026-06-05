@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { agentService } from '../services/agent';
+import { cloudAuthService } from '../services/cloudAuth';
 import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
@@ -18,11 +19,9 @@ import SearchIcon from './icons/SearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
 import UserGroupIcon from './icons/UserGroupIcon';
-import LoginButton from './LoginButton';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  onShowLogin?: () => void;
   activeView: 'cowork' | 'skills' | 'runtime' | 'agents';
   onShowSkills: () => void;
   onShowCowork: () => void;
@@ -316,7 +315,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 pb-3 pt-1 flex items-center gap-1">
           {!hideLogin && (
             <>
-              <LoginButton />
+              <SidebarLoginEntry />
               <div className="flex-1" />
             </>
           )}
@@ -367,9 +366,91 @@ const Sidebar: React.FC<SidebarProps> = ({
   );
 };
 
-/* ── Current run target quick-switch ─── */
+/* ── Sidebar login entry ─── */
 
-const SidebarRunTargetSwitcher: React.FC<{
+const SidebarLoginEntry: React.FC = () => {
+  const { isLoggedIn, isLoading, user, hasCompletedFirstLogin } = useSelector(
+    (s: RootState) => s.cloudAuth
+  );
+  const [showMenu, setShowMenu] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    if (showMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMenu]);
+
+  if (isLoading || hasCompletedFirstLogin === null) {
+    return null;
+  }
+
+  const handleClick = () => {
+    if (isLoggedIn) {
+      setShowMenu((v) => !v);
+    } else {
+      cloudAuthService.requireAuth();
+    }
+  };
+
+  const handleLogout = async () => {
+    await cloudAuthService.logout();
+    setShowMenu(false);
+  };
+
+  const displayName = user?.nickname || user?.username || (user?.mobile ? `****${user.mobile.slice(-4)}` : '');
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={handleClick}
+        className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors cursor-pointer"
+        aria-label={isLoggedIn ? displayName : i18nService.t('login')}
+      >
+        {isLoggedIn && user?.avatar ? (
+          <img src={user.avatar} alt="" className="h-4 w-4 rounded-full" />
+        ) : (
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <circle cx="12" cy="8" r="5" />
+            <path d="M20 21a8 8 0 0 0-16 0" />
+          </svg>
+        )}
+        <span className="truncate max-w-[80px]">
+          {isLoggedIn ? displayName : i18nService.t('login')}
+        </span>
+      </button>
+      {showMenu && isLoggedIn && (
+        <div className="absolute bottom-full left-[-0.5rem] mb-1 w-[14.5rem] bg-surface rounded-xl shadow-popover border border-border overflow-hidden z-50 popover-enter">
+          <div className="py-1">
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-surface-raised transition-colors cursor-pointer flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              {i18nService.t('authLogout')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ── Current run target quick-switch ─── */const SidebarRunTargetSwitcher: React.FC<{
   onShowCowork: () => void;
   onManageAgents: () => void;
   onSessionsLoadingChange: (loading: boolean) => void;

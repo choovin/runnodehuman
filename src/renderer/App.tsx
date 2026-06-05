@@ -333,10 +333,6 @@ const App: React.FC = () => {
     }, 2200);
   }, []);
 
-  const handleShowLogin = useCallback(() => {
-    showToast(i18nService.t('featureInDevelopment'));
-  }, [showToast]);
-
   const runUpdateCheck = useCallback(async () => {
     try {
       const currentVersion = await window.electron.appInfo.getVersion();
@@ -714,7 +710,6 @@ const App: React.FC = () => {
       )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
-          onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
           onShowSkills={handleShowSkills}
