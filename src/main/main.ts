@@ -2,6 +2,7 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { randomBytes } from 'crypto';
 import type { WebContents } from 'electron';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker,protocol, screen, session, shell, systemPreferences } from 'electron';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import * as http from 'http';
 import type { AddressInfo } from 'net';
@@ -76,6 +77,7 @@ import {
   initScheduledTaskHelpers,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
+import { registerCloudAuthHandlers, probeAndReport, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
 import {
   ClaudeRuntimeAdapter,
   CodexAppRuntimeAdapter,
@@ -189,6 +191,7 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
+import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
 import { McpStore } from './mcpStore';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { SkillManager } from './skillManager';
@@ -3322,6 +3325,16 @@ if (!gotTheLock) {
     const code = pendingAuthCode;
     pendingAuthCode = null;
     return code;
+  });
+
+  // Cloud auth (RunNode) — base URL probe and override
+  ipcMain.handle('cloud:probe-base-url', async () => {
+    return probeAndReport();
+  });
+
+  ipcMain.handle('cloud:set-base-url', async (_e, payload: { url: string | null }) => {
+    setCloudApiBaseUrlOverride(payload?.url ?? null);
+    return { success: true };
   });
 
   // macOS: handle open-url event for deep links
@@ -7856,6 +7869,13 @@ if (!gotTheLock) {
     setContentSecurityPolicy();
     bindCoworkRuntimeForwarder();
     bindOpenClawStatusForwarder();
+
+    // URS legacy cleanup (one-time, idempotent)
+    await runLegacyAuthCleanup(getStore().getDatabase());
+
+    // Cloud auth (RunNode)
+    const cloudBroadcaster = new EventEmitter();
+    registerCloudAuthHandlers(getStore().getDatabase(), cloudBroadcaster);
 
     console.log('[Main] initApp: creating window');
     createWindow();
