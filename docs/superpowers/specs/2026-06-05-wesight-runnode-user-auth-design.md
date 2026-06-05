@@ -1,5 +1,7 @@
 # WeSight × RunNode 用户体系接入 — Design
 
+> **Status:** Implemented (2026-06-05)
+
 ## Overview
 
 把 WeSight 当前基于 URS（统一登录中心）的 OAuth 单点登录，替换为对接 RunNode 业务云的会员体系。完全参考 RClaw 已落地的接口契约（`/app-api/member/auth/*` + `/app-api/member/user/get` + `/app-api/claw/user/device/*`），但用 WeSight 原生的直 IPC 模式实现，token 用 SQLCipher 加密存进现有 SQLite 库，URS 残留代码做一次硬重置清理。

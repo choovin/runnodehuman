@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Authentication
+
+WeSight now uses RunNode member auth (not URS OAuth). See `docs/superpowers/specs/2026-06-05-wesight-runnode-user-auth-design.md`. Code lives in:
+- `src/main/services/cloudAuth.ts`
+- `src/main/services/cloudAuthTokenStore.ts` (SQLCipher)
+- `src/main/services/cloudUserDeviceService.ts` (main-process heartbeat)
+- `src/renderer/services/cloudAuth.ts`
+- `src/renderer/store/slices/cloudAuthSlice.ts`
+- `src/renderer/components/LoginGate.tsx`
+- `src/renderer/components/LoginModal.tsx`
+
 ## Build and Development Commands
 
 ```bash
