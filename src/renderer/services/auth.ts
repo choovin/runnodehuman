@@ -1,5 +1,5 @@
 import { store } from '../store';
-import { setAuthLoading, setLoggedIn, setLoggedOut, setProfileSummary, updateQuota } from '../store/slices/authSlice';
+import { setAuthLoading, setLoggedIn, setLoggedOut, setProfileSummary, updateQuota } from '../store/slices/cloudAuthSlice';
 import type { Model } from '../store/slices/modelSlice';
 import { clearServerModels, setServerModels } from '../store/slices/modelSlice';
 
@@ -46,7 +46,7 @@ class AuthService {
 
     // Refresh quota and models when Electron window gains focus — user may have purchased on portal
     this.unsubWindowState = window.electron.window.onStateChanged((state) => {
-      if (state.isFocused && store.getState().auth.isLoggedIn) {
+      if (state.isFocused && store.getState().cloudAuth.isLoggedIn) {
         const now = Date.now();
         if (now - this.lastRefreshTime > 30_000) {
           this.lastRefreshTime = now;

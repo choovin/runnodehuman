@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import { authService } from '../services/auth';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
-import type { CreditItem } from '../store/slices/authSlice';
+import type { CreditItem } from '../store/slices/cloudAuthSlice';
 
 const getSubscriptionBadge = (label: string) => {
   // Determine badge style based on label
@@ -96,8 +96,8 @@ const CreditItemRow: React.FC<{ item: CreditItem; isEn: boolean }> = ({ item, is
 };
 
 const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const user = useSelector((state: RootState) => state.auth.user);
-  const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
+  const user = useSelector((state: RootState) => state.cloudAuth.user);
+  const profileSummary = useSelector((state: RootState) => state.cloudAuth.profileSummary);
   const [creditsExpanded, setCreditsExpanded] = useState(false);
   const isEn = i18nService.getLanguage() === 'en';
 
@@ -223,7 +223,7 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 };
 
 const LoginButton: React.FC = () => {
-  const { isLoggedIn, isLoading, user } = useSelector((state: RootState) => state.auth);
+  const { isLoggedIn, isLoading, user } = useSelector((state: RootState) => state.cloudAuth);
   const [showMenu, setShowMenu] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 

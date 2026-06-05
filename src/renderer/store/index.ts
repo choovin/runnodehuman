@@ -1,7 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 
 import agentReducer from './slices/agentSlice';
-import authReducer from './slices/authSlice';
+import cloudAuthReducer from './slices/cloudAuthSlice';
 import coworkReducer from './slices/coworkSlice';
 import imReducer from './slices/imSlice';
 import mcpReducer from './slices/mcpSlice';
@@ -20,7 +20,7 @@ export const store = configureStore({
     quickAction: quickActionReducer,
     scheduledTask: scheduledTaskReducer,
     agent: agentReducer,
-    auth: authReducer,
+    cloudAuth: cloudAuthReducer,
   },
 });
 
