@@ -253,6 +253,8 @@ export interface AppConfig {
   language: 'zh' | 'en';
   // 是否使用系统代理
   useSystemProxy: boolean;
+  // RunNode 云端 API 自定义地址（覆盖 VITE_CLOUD_API_BASE_URL）
+  cloudApiBaseUrl?: string;
   // 桌面宠物配置
   pet: PetConfig;
   // 语言初始化标记 (用于判断是否是首次启动)

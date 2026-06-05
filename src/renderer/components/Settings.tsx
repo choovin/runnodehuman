@@ -83,6 +83,7 @@ import IMSettings from './im/IMSettings';
 import McpManager from './mcp/McpManager';
 import PetSprite, { PetMood } from './pet/PetSprite';
 import { ScheduledTasksView } from './scheduledTasks';
+import { CloudApiSection } from './Settings/CloudApiSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -4527,6 +4528,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                   />
                 </button>
               </label>
+            </div>
+
+            {/* Cloud API Section */}
+            <div>
+              <h4 className="text-sm font-medium text-foreground mb-3">
+                {i18nService.t('authCloudBaseUrlLabel')}
+              </h4>
+              <CloudApiSection />
             </div>
 
             {/* Appearance Section — mode selector + theme gallery */}
