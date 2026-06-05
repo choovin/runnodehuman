@@ -1,11 +1,8 @@
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
-import { randomBytes } from 'crypto';
 import type { WebContents } from 'electron';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker,protocol, screen, session, shell, systemPreferences } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
-import * as http from 'http';
-import type { AddressInfo } from 'net';
 import os from 'os';
 import path from 'path';
 
@@ -71,13 +68,13 @@ import {
   rejectPairingRequest,
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
+import { probeAndReport, registerCloudAuthHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
 import {
   getCronJobService,
   initCronJobServiceManager,
   initScheduledTaskHelpers,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
-import { registerCloudAuthHandlers, probeAndReport, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
 import {
   ClaudeRuntimeAdapter,
   CodexAppRuntimeAdapter,
@@ -90,7 +87,7 @@ import {
 } from './libs/agentEngine';
 import { formatApiFetchLogPayload } from './libs/apiFetchLogSanitizer';
 import { cancelActiveDownload,downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
-import { clearServerModelMetadata,getCurrentApiConfig, resolveCurrentApiConfig, setAuthTokensGetter, setServerBaseUrlGetter, setStoreGetter, updateServerModelMetadata } from './libs/claudeSettings';
+import { getCurrentApiConfig, resolveCurrentApiConfig, setStoreGetter } from './libs/claudeSettings';
 import { CodexAppManager } from './libs/codexAppManager';
 import { CodexAppServerClient } from './libs/codexAppServerClient';
 import { CodexAppTaskSync } from './libs/codexAppTaskSync';
@@ -168,7 +165,6 @@ import {
   importOpenClawLocalFeishuConfig,
   type OpenClawLocalFeishuDetection,
 } from './libs/openclawSystemRuntime';
-import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import {
   getPerformanceSnapshot,
   markTiming,
@@ -191,8 +187,8 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
-import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
 import { McpStore } from './mcpStore';
+import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
@@ -1079,17 +1075,8 @@ const bootstrapHermesEngine = async (options: { forceReinstall?: boolean; reason
   return promise;
 };
 
-// Module-level handle so ensureOpenClawRunningForCowork can await any in-flight
-// proactive token refresh before syncing config to the gateway.
-let pendingTokenRefresh: Promise<string | null> | null = null;
-
 const ensureOpenClawRunningForCowork = async () => {
   const manager = getOpenClawEngineManager();
-
-  if (pendingTokenRefresh) {
-    console.log('[OpenClaw] ensureRunning: awaiting pending token refresh before gateway start');
-    await pendingTokenRefresh.catch(() => {});
-  }
 
   // Ensure MCP bridge is started and config is synced before launching the gateway,
   // so that mcpBridge tools are available in openclaw.json when the gateway loads.
@@ -2139,19 +2126,6 @@ const bindCoworkRuntimeForwarder = (): void => {
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Completed);
     const payload = { sessionId, claudeSessionId };
     sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamComplete, 'complete', payload, { fallbackToAll: true });
-    // If session used a server model, notify renderer to refresh quota
-    try {
-      const apiConfig = resolveCurrentApiConfig();
-      if (apiConfig.providerMetadata?.providerName === 'wesight-server') {
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win.isDestroyed()) return;
-          win.webContents.send('auth:quotaChanged');
-        });
-      }
-    } catch {
-      // ignore
-    }
   });
 
   runtime.on('error', (sessionId: string, error: string) => {
@@ -3216,117 +3190,12 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   target.reloadIgnoringCache();
 };
 
-const registerOAuthProtocol = (): void => {
-  const scheme = 'wesight';
-  const appPath = app.getAppPath();
-  const registered = process.defaultApp
-    ? app.setAsDefaultProtocolClient(scheme, process.execPath, [appPath])
-    : app.setAsDefaultProtocolClient(scheme);
-  console.log(`[Auth] custom protocol ${registered ? 'registered' : 'registration failed'} for ${scheme}://`);
-};
-
 // 确保应用程序只有一个实例
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  // Register custom protocol for OAuth callback
-  registerOAuthProtocol();
-
-  // Buffer for deep link auth code received before renderer is ready
-  let pendingAuthCode: string | null = null;
-  let desktopAuthCallbackServer: http.Server | null = null;
-  let desktopAuthCallbackUrl: string | null = null;
-
-  /**
-   * Parse a wesight:// deep link and send (or buffer) the auth code.
-   */
-  const deliverAuthCode = (code: string) => {
-    pendingAuthCode = code;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('auth:callback', { code });
-    }
-  };
-
-  const handleDeepLink = (url: string) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
-        const code = parsed.searchParams.get('code');
-        if (code) {
-          deliverAuthCode(code);
-        }
-      }
-    } catch (e) {
-      console.error('[Main] Failed to parse deep link:', e);
-    }
-  };
-
-  const ensureDesktopAuthCallbackUrl = async (): Promise<string> => {
-    if (desktopAuthCallbackUrl && desktopAuthCallbackServer?.listening) {
-      return desktopAuthCallbackUrl;
-    }
-
-    const callbackToken = randomBytes(18).toString('base64url');
-    desktopAuthCallbackServer = http.createServer((request, response) => {
-      try {
-        const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
-        if (requestUrl.pathname !== '/auth/callback' || requestUrl.searchParams.get('token') !== callbackToken) {
-          response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-          response.end('Not found');
-          return;
-        }
-
-        const code = requestUrl.searchParams.get('code');
-        if (!code) {
-          response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-          response.end('Missing auth code');
-          return;
-        }
-
-        deliverAuthCode(code);
-        response.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-        });
-        response.end(`<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <title>WeSight 登录完成</title>
-  </head>
-  <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;color:#191917;background:#f6f3ea;">
-    <h1>WeSight 登录完成</h1>
-    <p>可以回到 WeSight 桌面端继续使用。</p>
-    <script>window.close();</script>
-  </body>
-</html>`);
-      } catch (error) {
-        response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        response.end('OAuth callback failed');
-        console.error('[Auth] local OAuth callback failed:', error);
-      }
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      desktopAuthCallbackServer?.once('error', reject);
-      desktopAuthCallbackServer?.listen(0, '127.0.0.1', resolve);
-    });
-
-    const address = desktopAuthCallbackServer.address() as AddressInfo;
-    desktopAuthCallbackUrl = `http://127.0.0.1:${address.port}/auth/callback?token=${callbackToken}`;
-    console.log('[Auth] local OAuth callback server started');
-    return desktopAuthCallbackUrl;
-  };
-
-  // Allow renderer to retrieve a buffered auth code on init
-  ipcMain.handle('auth:getPendingCallback', () => {
-    const code = pendingAuthCode;
-    pendingAuthCode = null;
-    return code;
-  });
-
   // Cloud auth (RunNode) — base URL probe and override
   ipcMain.handle('cloud:probe-base-url', async () => {
     return probeAndReport();
@@ -3337,20 +3206,8 @@ if (!gotTheLock) {
     return { success: true };
   });
 
-  // macOS: handle open-url event for deep links
-  app.on('open-url', (event, url) => {
-    event.preventDefault();
-    handleDeepLink(url);
-  });
-
   app.on('second-instance', (_event, commandLine, workingDirectory) => {
     console.debug('[Main] second-instance event', { commandLine, workingDirectory });
-
-    // Check for deep link in command line args (Windows/Linux)
-    const deepLink = commandLine.find(arg => arg.startsWith('wesight://'));
-    if (deepLink) {
-      handleDeepLink(deepLink);
-    }
 
     // Focus main window
     if (mainWindow) {
@@ -3608,307 +3465,6 @@ if (!gotTheLock) {
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getSystemLocale', () => app.getLocale());
-
-  // ── Auth IPC handlers ──
-
-  /**
-   * Helper: Persist auth tokens into the kv store.
-   */
-  const saveAuthTokens = (accessToken: string, refreshToken: string) => {
-    getStore().set('auth_tokens', { accessToken, refreshToken });
-  };
-
-  const getAuthTokens = (): { accessToken: string; refreshToken: string } | null => {
-    return getStore().get<{ accessToken: string; refreshToken: string }>('auth_tokens') || null;
-  };
-
-  const clearAuthTokens = () => {
-    getStore().delete('auth_tokens');
-  };
-
-  /**
-   * Helper: Fetch with Bearer token, auto-refresh on 401 and retry once.
-   */
-  const fetchWithAuth = async (url: string, options?: RequestInit): Promise<Response> => {
-    const tokens = getAuthTokens();
-    if (!tokens) throw new Error('No auth tokens');
-
-    const doFetch = (accessToken: string) =>
-      net.fetch(url, {
-        ...options,
-        headers: { ...(options?.headers as Record<string, string>), Authorization: `Bearer ${accessToken}` },
-      });
-
-    let resp = await doFetch(tokens.accessToken);
-
-    if (resp.status === 401 && tokens.refreshToken) {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const refreshResp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: tokens.refreshToken }),
-      });
-      if (refreshResp.ok) {
-        const refreshBody = await refreshResp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-        if (refreshBody.code === 0 && refreshBody.data) {
-          saveAuthTokens(refreshBody.data.accessToken, refreshBody.data.refreshToken || tokens.refreshToken);
-          resp = await doFetch(refreshBody.data.accessToken);
-        }
-      } else {
-        clearAuthTokens();
-        clearServerModelMetadata();
-      }
-    }
-
-    return resp;
-  };
-
-  /**
-   * Normalize quota data from various server response formats into a unified shape.
-   */
-  const normalizeQuota = (raw: Record<string, unknown>) => {
-    let creditsLimit = 0;
-    let creditsUsed = 0;
-    let planName = t('authPlanFree');
-    let subscriptionStatus = 'free';
-
-    if (typeof raw.freeCreditsTotal === 'number') {
-      // Free user format from /api/user/quota
-      creditsLimit = raw.freeCreditsTotal as number;
-      creditsUsed = (raw.freeCreditsUsed as number) || 0;
-      planName = (raw.planName as string) || t('authPlanFree');
-      subscriptionStatus = (raw.subscriptionStatus as string) || 'free';
-    } else if (typeof raw.monthlyCreditsLimit === 'number') {
-      // Paid user format from /api/user/quota
-      creditsLimit = raw.monthlyCreditsLimit as number;
-      creditsUsed = (raw.monthlyCreditsUsed as number) || 0;
-      planName = (raw.planName as string) || t('authPlanStandard');
-      subscriptionStatus = (raw.subscriptionStatus as string) || 'active';
-    } else if (typeof raw.dailyCreditsLimit === 'number') {
-      // Legacy exchange format
-      creditsLimit = raw.dailyCreditsLimit as number;
-      creditsUsed = (raw.dailyCreditsUsed as number) || 0;
-      planName = (raw.planName as string) || t('authPlanFree');
-      subscriptionStatus = (raw.subscriptionStatus as string) || 'free';
-    } else if (typeof raw.creditsLimit === 'number') {
-      // Already normalized
-      return raw;
-    }
-
-    return {
-      planName,
-      subscriptionStatus,
-      creditsLimit,
-      creditsUsed,
-      creditsRemaining: Math.max(0, creditsLimit - creditsUsed),
-    };
-  };
-
-  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
-    try {
-      const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-      const url = new URL(baseUrl);
-      url.searchParams.set('source', 'electron');
-      if (!loginUrl) {
-        url.searchParams.set('desktopCallback', await ensureDesktopAuthCallbackUrl());
-      }
-      await shell.openExternal(url.toString());
-      return { success: true };
-    } catch (error) {
-      console.error('[Auth] login failed:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to open login' };
-    }
-  });
-
-  ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await net.fetch(`${serverBaseUrl}/api/auth/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ authCode: code }),
-      });
-      if (!resp.ok) {
-        return { success: false, error: `Exchange failed: ${resp.status}` };
-      }
-      const body = await resp.json() as {
-        code: number;
-        message?: string;
-        data: {
-          accessToken: string;
-          refreshToken: string;
-          user: Record<string, unknown>;
-          quota: Record<string, unknown>;
-        };
-      };
-      if (body.code !== 0 || !body.data) {
-        return { success: false, error: body.message || 'Exchange failed' };
-      }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
-      return { success: true, user: body.data.user, quota: normalizeQuota(body.data.quota) };
-    } catch (error) {
-      console.error('[Auth] exchange failed:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Exchange failed' };
-    }
-  });
-
-  ipcMain.handle('auth:getUser', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      // Fetch user profile
-      const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile`);
-      if (!profileResp.ok) {
-        if (profileResp.status === 401) {
-          clearAuthTokens();
-          clearServerModelMetadata();
-        }
-        return { success: false };
-      }
-      const profileBody = await profileResp.json() as { code: number; data: Record<string, unknown> };
-      if (profileBody.code !== 0 || !profileBody.data) return { success: false };
-      // Fetch quota separately
-      const quotaResp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      let quota = null;
-      if (quotaResp.ok) {
-        const quotaBody = await quotaResp.json() as { code: number; data: Record<string, unknown> };
-        if (quotaBody.code === 0 && quotaBody.data) {
-          quota = normalizeQuota(quotaBody.data);
-        }
-      }
-      return { success: true, user: profileBody.data, quota };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getQuota', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      if (!resp.ok) {
-        if (resp.status === 401) {
-          clearAuthTokens();
-          clearServerModelMetadata();
-        }
-        return { success: false };
-      }
-      const body = await resp.json() as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      return { success: true, quota: normalizeQuota(body.data) };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getProfileSummary', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile-summary`);
-      if (!resp.ok) {
-        if (resp.status === 401) {
-          clearAuthTokens();
-          clearServerModelMetadata();
-        }
-        return { success: false };
-      }
-      const body = await resp.json() as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      return { success: true, data: body.data };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:logout', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (tokens) {
-        const serverBaseUrl = getServerApiBaseUrl();
-        await net.fetch(`${serverBaseUrl}/api/auth/logout`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${tokens.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ refreshToken: tokens.refreshToken }),
-        }).catch(() => { /* best-effort */ });
-      }
-      clearAuthTokens();
-      clearServerModelMetadata();
-      return { success: true };
-    } catch {
-      clearAuthTokens();
-      clearServerModelMetadata();
-      return { success: true };
-    }
-  });
-
-  ipcMain.handle('auth:refreshToken', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens?.refreshToken) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: tokens.refreshToken }),
-      });
-      if (!resp.ok) {
-        clearAuthTokens();
-        clearServerModelMetadata();
-        return { success: false };
-      }
-      const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-      if (body.code !== 0 || !body.data) {
-        clearAuthTokens();
-        clearServerModelMetadata();
-        return { success: false };
-      }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-      return { success: true, accessToken: body.data.accessToken };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  ipcMain.handle('auth:getAccessToken', async () => {
-    const tokens = getAuthTokens();
-    return tokens?.accessToken || null;
-  });
-
-  ipcMain.handle('auth:getModels', async () => {
-    try {
-      const tokens = getAuthTokens();
-      if (!tokens) {
-        console.log('[Auth:getModels] No auth tokens available');
-        return { success: false };
-      }
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = `${serverBaseUrl}/api/models/available`;
-      console.log('[Auth:getModels] Fetching:', url);
-      const resp = await fetchWithAuth(url);
-      console.log('[Auth:getModels] Response status:', resp.status);
-      if (!resp.ok) {
-        console.log('[Auth:getModels] Response not ok:', resp.status, resp.statusText);
-        return { success: false };
-      }
-      const data = await resp.json() as { code: number; data: Array<{ modelId: string; modelName: string; provider: string; apiFormat: string; supportsImage?: boolean }> };
-      console.log('[Auth:getModels] Response data:', JSON.stringify(data).slice(0, 500));
-      if (data.code !== 0) return { success: false };
-      // Cache server model metadata for use in OpenClaw config sync (supportsImage, etc.)
-      updateServerModelMetadata(data.data);
-      return { success: true, models: data.data };
-    } catch (e) {
-      console.error('[Auth:getModels] Error:', e);
-      return { success: false };
-    }
-  });
 
   // Skills IPC handlers
   ipcMain.handle(SkillsIpcChannel.List, () => {
@@ -7625,8 +7181,6 @@ if (!gotTheLock) {
       console.error('Failed to stop OpenAI compatibility proxy:', error);
     });
 
-    stopOpenClawTokenProxy();
-
     // Stop skill services.
     const skillServices = getSkillServiceManager();
     await skillServices.stopAll();
@@ -7734,7 +7288,6 @@ if (!gotTheLock) {
   type StartupServiceName =
     | 'session_recovery'
     | 'runtime_call_recovery'
-    | 'token_proxy'
     | 'enterprise_sync'
     | 'runtime_forwarders'
     | 'openclaw_config_sync'
@@ -7762,7 +7315,6 @@ if (!gotTheLock) {
   const startupServiceNames: StartupServiceName[] = [
     'session_recovery',
     'runtime_call_recovery',
-    'token_proxy',
     'enterprise_sync',
     'runtime_forwarders',
     'openclaw_config_sync',
@@ -7883,23 +7435,6 @@ if (!gotTheLock) {
     console.log('[Main] initApp: window created');
     applyDesktopPetConfigFromStore();
 
-    // Windows/Linux cold start: parse deep link from process.argv
-    // Always buffer since renderer is not ready yet after createWindow().
-    const coldStartDeepLink = process.argv.find(arg => arg.startsWith('wesight://'));
-    if (coldStartDeepLink) {
-      try {
-        const parsed = new URL(coldStartDeepLink);
-        if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
-          const code = parsed.searchParams.get('code');
-          if (code) {
-            pendingAuthCode = code;
-          }
-        }
-      } catch (e) {
-        console.error('[Main] Failed to parse cold-start deep link:', e);
-      }
-    }
-
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them after the shell is created.
     await runStartupService('session_recovery', () => {
@@ -7921,66 +7456,6 @@ if (!gotTheLock) {
     }, { degradedOnError: true });
     // Inject store getter into claudeSettings
     setStoreGetter(() => store);
-    // Inject auth getters for wesight-server provider routing
-    // The getter proactively triggers a background token refresh when the
-    // accessToken is within 5 minutes of expiry, so that the SDK always
-    // gets a fresh token without blocking.
-    //
-    // refreshOnce() is the single entry-point for all token refresh paths
-    // (proactive, proxy 401/403 retry). It deduplicates concurrent calls via
-    // pendingTokenRefresh so that rolling refresh tokens are never consumed twice.
-    const refreshOnce = async (reason: string): Promise<string | null> => {
-      if (pendingTokenRefresh) {
-        return pendingTokenRefresh;
-      }
-      let resolvedToken: string | null = null;
-      pendingTokenRefresh = (async () => {
-        try {
-          const tokens = getAuthTokens();
-          if (!tokens?.refreshToken) return null;
-          const serverBaseUrl = getServerApiBaseUrl();
-          const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken: tokens.refreshToken }),
-          });
-          if (resp.ok) {
-            const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-            if (body.code === 0 && body.data) {
-              saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-              console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
-              resolvedToken = body.data.accessToken;
-              // Token proxy handles fresh tokens dynamically — no need
-              // to restart the gateway on token refresh.
-              syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
-                console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
-              });
-            }
-          }
-        } catch (err) {
-          console.warn(`[Auth] token refresh failed (reason: ${reason}):`, err);
-        } finally {
-          pendingTokenRefresh = null;
-        }
-        return resolvedToken;
-      })();
-      return pendingTokenRefresh;
-    };
-
-    setAuthTokensGetter(() => {
-      const tokens = getAuthTokens();
-      if (!tokens) return null;
-      // Check if accessToken is close to expiry and trigger background refresh
-      try {
-        const payload = JSON.parse(Buffer.from(tokens.accessToken.split('.')[1], 'base64').toString());
-        const expiresAt = payload.exp * 1000;
-        if (expiresAt - Date.now() < 5 * 60 * 1000) {
-          void refreshOnce('proactive'); // fire-and-forget
-        }
-      } catch { /* unable to parse JWT, return token as-is */ }
-      return tokens;
-    });
-    setServerBaseUrlGetter(() => getServerApiBaseUrl());
 
     // Initialize Copilot token manager and restore token state if available
     initCopilotTokenManager(getStore);
@@ -7996,30 +7471,6 @@ if (!gotTheLock) {
       });
     }
 
-    registerProxyTokenRefresher('wesight-server', async () => {
-      const tokens = getAuthTokens();
-      if (!tokens?.refreshToken) return null;
-      const serverBaseUrl = getServerApiBaseUrl();
-      try {
-        const resp = await net.fetch(`${serverBaseUrl}/api/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: tokens.refreshToken }),
-        });
-        if (resp.ok) {
-          const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-            console.log('[Auth] proxy token refresh succeeded');
-            return body.data.accessToken;
-          }
-        }
-      } catch (err) {
-        console.warn('[Auth] proxy token refresh failed:', err);
-      }
-      return null;
-    });
-
     registerProxyTokenRefresher('github-copilot', async () => {
       try {
         const { refreshCopilotTokenNow } = await import('./libs/copilotTokenManager');
@@ -8034,17 +7485,6 @@ if (!gotTheLock) {
     markTiming('t1_ready_ms');
 
     void (async () => {
-
-    // Start the lightweight token proxy before OpenClaw config sync so that
-    // wesight-server provider can use the proxy URL in its config.
-    await runStartupService('token_proxy', async () => {
-      await startOpenClawTokenProxy({
-        getAuthTokens,
-        refreshToken: refreshOnce,
-        getServerBaseUrl: getServerApiBaseUrl,
-      });
-      console.log('[Main] OpenClaw token proxy started');
-    }, { degradedOnError: true });
 
     // Enterprise config sync — must run before openclawConfigSync
     // so enterprise data is in SQLite when the config is generated.
