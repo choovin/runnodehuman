@@ -43,9 +43,10 @@ RClaw 已经把这套做完了（`cloud-auth.ts` + `cloud-auth-token-store.ts` +
 │                       Electron Main                            │
 │                                                                │
 │  ipcMain.handle('cloud:auth:*')  ──►  CloudAuthService        │
-│  ipcMain.handle('cloud:device:*')──►  CloudUserDeviceService  │
-│                                       │                        │
-│                                       ▼                        │
+│                              │                                │
+│                              │  (cloudUserDeviceService 在 main │
+│                              │   内部 self-schedule，外部不调)  │
+│                              ▼                                │
 │                       CloudAuthTokenStore (SQLCipher)         │
 │                       CloudUserDeviceStore (SQLCipher)         │
 │                       CloudApiBaseUrl (env + Settings)         │
@@ -261,10 +262,12 @@ CloudFetch.doFetch(url, init)
 - `wechatGetQr(redirectUri): Promise<{ success, qrUrl?, ticket, expiresIn }>`
 - `wechatPoll(ticket): Promise<{ status, code?, state? }>`
 - `loginWithWechat(code, state): Promise<LoginResult>`
-- `logout(): Promise<{ success }>`
-- `getStatus(): Promise<{ isLoggedIn, user? }>`
-- `fetchMemberAuthorized(url, init): Promise<Response>` — 带 401 自动重试
-- 私有 `broadcastLoggedOut()`、`resolveUserProfileAfterLogin(fallback)`、`parseMemberAuthLoginBody()`、`parseMemberAuthRefreshBody()`
+  - `logout(): Promise<{ success }>`
+  - `getStatus(): Promise<{ isLoggedIn, user?, hasCompletedFirstLogin }>`
+  - `fetchMemberAuthorized(url, init): Promise<Response>` — 带 401 自动重试
+  - 私有 `broadcastLoggedOut()`、`resolveUserProfileAfterLogin(fallback)`、`parseMemberAuthLoginBody()`、`parseMemberAuthRefreshBody()`、`readFirstLoginFlag()`（读 `app_state.has_completed_first_login`，缺省返 `false`）
+
+> `getStatus()` 返回的 `hasCompletedFirstLogin` 必须包含：渲染层启动时调用 `getStatus()` 一次拿到这个字段，`cloudAuthSlice` 据此设初值，LoginGate 才能正确分支（`null`/`false`/`true`）。如果只让 slice 写内存里的标志、不从主进程读，会出现 LoginGate 永远停在 `<LoadingScreen />`（因为 `hasCompletedFirstLogin === null`）。
 
 #### `src/main/services/cloudAuthTokenStore.ts`
 
@@ -281,8 +284,8 @@ CloudFetch.doFetch(url, init)
 `CloudUserDeviceService` 类：
 - `init(): Promise<void>` — 读 deviceId，缺则 `uuid()` 生成；**同时启动 main 进程 `setInterval` 调度器**（5 分钟一次，调用 `heartbeat()`）。**明确不在 renderer 调度**：renderer 定时器在窗口隐藏时会被节流/暂停，丢失心跳；放在 main 进程里能跨窗口状态稳定触发。`start()` 一次后由 main 进程常驻，与 BrowserWindow 生命周期解耦。
 - `afterLogin(): Promise<void>` — 登录后 fire-and-forget 调 `POST /app-api/claw/user/device/register`
-- `heartbeat(): Promise<void>` — 单次心跳 `POST /app-api/claw/user/device/heartbeat`，由 main 进程的 `setInterval` 触发
-- `clear(): Promise<void>` — 登出时清
+- `heartbeat(): Promise<void>` — 单次心跳 `POST /app-api/claw/user/device/heartbeat`，由 main 进程的 `setInterval` 触发。**调用前先 short-circuit**：`cloudAuthTokenStore.load()` 为空时直接 return（避免登出后发无意义请求）
+- `clear(): Promise<void>` — 登出时清 device store **并 `clearInterval` 停掉心跳调度器**；下一次 `init()`（重新登录后）会重启
 
 > 把 `CloudUserDeviceService` 放在 A 而非 B/C 的理由：`claw/user/device/*` 是 RunNode 用户域的 API（RClaw 把它归在 `08_Claw_User_Device_API.md` 跟 `member/auth` 并列），属于"用户身份 + 设备维度"的紧邻概念；模型/引擎配置（B/C）不涉及设备。心跳调度器放在 main 进程也跟用户体系是同一层。
 
@@ -307,7 +310,7 @@ CloudFetch.doFetch(url, init)
 
 #### `src/main/ipcHandlers/cloudAuth.ts`
 
-注册 9 个 `ipcMain.handle`：
+注册 8 个 `ipcMain.handle`：
 - `cloud:auth:login-password`
 - `cloud:auth:send-sms-code`
 - `cloud:auth:login-sms`
@@ -318,11 +321,7 @@ CloudFetch.doFetch(url, init)
 - `cloud:auth:get-status`
 - （加 2 个 main → renderer 的事件）：`cloud:auth:logged-out`、`cloud:auth:login-success`
 
-#### `src/main/ipcHandlers/cloudUserDevice.ts`
-
-注册 2 个 `ipcMain.handle`：
-- `cloud:device:register`
-- `cloud:device:heartbeat`
+> **不创建 `src/main/ipcHandlers/cloudUserDevice.ts`**：`CloudUserDeviceService.afterLogin()` 和 `heartbeat()` 都在 main 进程内部触发（前者 fire-and-forget 自 `CloudAuthService.login*`，后者由 `setInterval` 调度），renderer 永远不调。建 IPC handler 是死代码。
 
 #### `src/main/migrations/legacyAuthCleanup.ts`
 
@@ -436,7 +435,7 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 | `src/main/main.ts` | 在 `app.whenReady()` 早期调 `legacyAuthCleanup.run()`；删所有 `auth:*` handler + deep link 注册；新增 `cloud:auth:*` 和 `cloud:device:*` 注册 |
 | `src/renderer/services/i18n.ts` | 新增 key：`authCloud*`、`authMethodPassword` / `authMethodSms` / `authMethodWechat`、`authWechatWaiting` / `authWechatScanned` / `authWechatExpired`、`authSmsCountdown`、`authCloudLoggedOutToast`、`authCloudFirstRunTitle` 等；删除 `authPlanFree` / `authPlanStandard` / `authPlanAdvanced` / `authPlanPro` / `authQuotaExhausted` / `authCreditsUnit` / `authExpiresAt` 等（B 才需要） |
 | `src/renderer/services/config.ts` | 新增 `cloudApiBaseUrl` 字段（用户可在 Settings 改） |
-| `src/renderer/components/Settings/CloudApiSection.tsx` | 新增 Settings 区块：RunNode API 地址输入框 + "测试连接"按钮（调 `cloud:auth:get-status` 验证 baseUrl + 网络可达性）+ "保存"按钮（写回 `configService.cloudApiBaseUrl` 并触发 `cloudApiBaseUrl` 重新初始化） |
+| `src/renderer/components/Settings/CloudApiSection.tsx` | 新增 Settings 区块：RunNode API 地址输入框 + "测试连接"按钮（走 main 进程 `probeCloudBaseUrl()`：故意用缺字段的 POST 请求探活，4xx 视为"已连通"、网络 reject 视为"失败"）+ "保存"按钮（写回 `configService.cloudApiBaseUrl` 并触发 `cloudApiBaseUrl` 重新初始化） |
 | `electron-builder.json` | 确保 native module（SQLCipher）打进去 |
 | `package.json` scripts | `pretest` 加 `electron-rebuild`（如果用 native sqlcipher） |
 
@@ -452,6 +451,7 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 | `cloudApiBaseUrl.test.ts` | Settings 覆盖优先级；env 兜底；都没 → 抛错 |
 | `cloudFetch.test.ts` | 401 → refresh → 重试；refresh 失败 → 抛错 |
 | `parseMemberAuthLoginBody.test.ts` | 各种响应形状（标准、扁平、旧字段名） |
+| `parseMemberAuthRefreshBody.test.ts` | refresh 响应形状（带新 refreshToken 轮换 / 不带轮换 / 错误码） |
 
 ### 集成测试（Vitest + mock net.fetch）
 
