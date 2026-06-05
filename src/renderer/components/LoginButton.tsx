@@ -1,7 +1,7 @@
 import React, { useEffect,useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import { authService } from '../services/auth';
+import { cloudAuthService } from '../services/cloudAuth';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
 import type { CreditItem } from '../store/slices/cloudAuthSlice';
@@ -102,11 +102,12 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const isEn = i18nService.getLanguage() === 'en';
 
   useEffect(() => {
-    authService.fetchProfileSummary();
+    // TODO(spec-b): quota/profileSummary/access-token support comes in spec B
+    // authService.fetchProfileSummary();
   }, []);
 
   const handleLogout = async () => {
-    await authService.logout();
+    await cloudAuthService.logout();
     onClose();
   };
 
@@ -249,7 +250,8 @@ const LoginButton: React.FC = () => {
     if (isLoggedIn) {
       setShowMenu(!showMenu);
     } else {
-      await authService.login();
+      // TODO(spec-a): login() replaced by login modal flow in task 13
+      await cloudAuthService.login();
     }
   };
 

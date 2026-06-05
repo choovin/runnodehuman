@@ -21,7 +21,7 @@ import { defaultConfig, getProviderDisplayName } from './config';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
 import { type AppUpdateDownloadProgress, type AppUpdateInfo, checkForAppUpdate, UPDATE_HEARTBEAT_INTERVAL_MS,UPDATE_POLL_INTERVAL_MS } from './services/appUpdate';
-import { authService } from './services/auth';
+import { cloudAuthService } from './services/cloudAuth';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
 import { i18nService } from './services/i18n';
@@ -115,8 +115,8 @@ const App: React.FC = () => {
         await waitWithTimeout(i18nService.initialize(), 5000, 'i18nService.initialize');
 
         // 初始化认证服务（恢复登录状态）
-        console.info('[App] initializeApp: authService.init');
-        await authService.init();
+        console.info('[App] initializeApp: cloudAuthService.init');
+        await cloudAuthService.init();
 
         console.info('[App] initializeApp: configService.getConfig');
         const config = await configService.getConfig();
