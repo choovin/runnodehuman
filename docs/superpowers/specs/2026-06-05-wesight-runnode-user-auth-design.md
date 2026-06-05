@@ -96,7 +96,7 @@ RClaw 已经把这套做完了（`cloud-auth.ts` + `cloud-auth-token-store.ts` +
 
 跟 RClaw 区别：RClaw 是 `useAuthStore.isLoggedIn` 二态，WeSight 这里拆成三态为了"首次启动必登录"这个产品决策（比 RClaw 严）。`hasCompletedFirstLogin` 持久化在 SQLite 的 `app_state` 表（key-value）。
 
-### 4 种登录方式数据流
+### 4 种登录方式 + 登出 数据流
 
 **A) 密码登录**
 
@@ -216,9 +216,9 @@ CloudFetch.doFetch(url, init)
     │       ▼
     │     refreshAccessToken() 再来一次
     │       │  成功 → 重试原请求
-    │       │  失败 → 返回 401 + 主进程发 'cloud:logged-out' 事件
+    │       │  失败 → 返回 401 + 主进程发 'cloud:auth:logged-out' 事件
     │       ▼
-    │     renderer 收到 'cloud:logged-out' → setLoggedOut() + toast 提示
+    │     renderer 收到 'cloud:auth:logged-out' → setLoggedOut() + toast 提示
 ```
 
 并发控制：
@@ -233,12 +233,13 @@ CloudFetch.doFetch(url, init)
 3. main: SQLCipher 打开 wesight.sqlite
 4. main: cloudAuthTokenStore.init()
 5. main: cloudUserDeviceStore.init()
-6. main: cloudApiBaseUrl.init()  // 读 VITE 编译期值 + Settings
-7. main: 注册 cloud:auth:* 和 cloud:device:* IPC handlers
-8. main: 创建 BrowserWindow
-9. renderer: App.tsx mount
-10. renderer: cloudAuthService.init()  // 读 cloud_tokens, 调 getStatus
-11. renderer: hasCompletedFirstLogin ?
+6. main: cloudUserDeviceService.init()  // 启动 main 进程 setInterval 心跳调度器
+7. main: cloudApiBaseUrl.init()  // 读 VITE 编译期值 + Settings
+8. main: 注册 cloud:auth:* 和 cloud:device:* IPC handlers
+9. main: 创建 BrowserWindow
+10. renderer: App.tsx mount
+11. renderer: cloudAuthService.init()  // 读 cloud_tokens, 调 getStatus
+12. renderer: hasCompletedFirstLogin ?
        │  false → 渲染 <LoginGate />  全屏覆盖
        │  true + isLoggedIn → 进主界面
        │  true + !isLoggedIn → 进主界面，Sidebar 灰掉 RunNode 入口
@@ -268,6 +269,8 @@ CloudFetch.doFetch(url, init)
 #### `src/main/services/cloudAuthTokenStore.ts`
 
 `CloudAuthTokenStore` 类，包装 SQLCipher：
+
+> **SQLCipher 共存策略：整库加密，不分文件。** 现有 `wesight.sqlite` 同时有 `cowork_*` / `scheduled_tasks` 等表（明文），A 实施时把底层驱动从 `better-sqlite3` 替换为 `better-sqlite3-multiple-ciphers`（是 `better-sqlite3` 的 SQLCipher fork，API 100% 兼容），整库用一把 key 加密。**不开新文件**：分开加密两个库会让 `app_state`、`kv` 跨库事务复杂化、备份/迁移要处理两个文件。**不做 mixed mode**：cipher 模式是 connection 级的，要么整库加密要么不加密。一次性迁移：第一次以 cipher key 打开时让 cipher 库自己 re-write 所有 page，**不需要手动写迁移脚本**。原有 `cowork_*` / `scheduled_tasks` 数据完整保留。
 - `init()` — 建表 `cloud_tokens`（schema：accessToken、refreshToken、expiresAt，单行）
 - `save(tokens: CloudTokens): Promise<void>`
 - `load(): Promise<CloudTokens | null>`
@@ -276,10 +279,12 @@ CloudFetch.doFetch(url, init)
 #### `src/main/services/cloudUserDeviceService.ts`
 
 `CloudUserDeviceService` 类：
-- `init()` — 读 deviceId，缺则 `uuid()` 生成
+- `init(): Promise<void>` — 读 deviceId，缺则 `uuid()` 生成；**同时启动 main 进程 `setInterval` 调度器**（5 分钟一次，调用 `heartbeat()`）。**明确不在 renderer 调度**：renderer 定时器在窗口隐藏时会被节流/暂停，丢失心跳；放在 main 进程里能跨窗口状态稳定触发。`start()` 一次后由 main 进程常驻，与 BrowserWindow 生命周期解耦。
 - `afterLogin(): Promise<void>` — 登录后 fire-and-forget 调 `POST /app-api/claw/user/device/register`
-- `heartbeat(): Promise<void>` — 周期心跳 `POST /app-api/claw/user/device/heartbeat`
+- `heartbeat(): Promise<void>` — 单次心跳 `POST /app-api/claw/user/device/heartbeat`，由 main 进程的 `setInterval` 触发
 - `clear(): Promise<void>` — 登出时清
+
+> 把 `CloudUserDeviceService` 放在 A 而非 B/C 的理由：`claw/user/device/*` 是 RunNode 用户域的 API（RClaw 把它归在 `08_Claw_User_Device_API.md` 跟 `member/auth` 并列），属于"用户身份 + 设备维度"的紧邻概念；模型/引擎配置（B/C）不涉及设备。心跳调度器放在 main 进程也跟用户体系是同一层。
 
 #### `src/main/services/cloudUserDeviceStore.ts`
 
@@ -311,7 +316,7 @@ CloudFetch.doFetch(url, init)
 - `cloud:auth:login-wechat`
 - `cloud:auth:logout`
 - `cloud:auth:get-status`
-- （加 1 个 main → renderer 的事件）：`cloud:auth:logged-out`、`cloud:auth:login-success`
+- （加 2 个 main → renderer 的事件）：`cloud:auth:logged-out`、`cloud:auth:login-success`
 
 #### `src/main/ipcHandlers/cloudUserDevice.ts`
 
@@ -322,8 +327,8 @@ CloudFetch.doFetch(url, init)
 #### `src/main/migrations/legacyAuthCleanup.ts`
 
 `legacyAuthCleanup.run(): Promise<void>`：
-- 检测 `auth_tokens` kv 存在 → 删除
-- 检测 `server_models_meta` kv 存在 → 删除
+- 检测 `auth_tokens` kv 存在 → 删除（URS OAuth 残留）
+- 检测 `server_models_meta` kv 存在 → 删除（**此 kv 由 URS 时代的 `auth:getModels` IPC handler 写入，存的是 URS 服务端模型列表快照**；属于 URS 时代数据，A 阶段硬清。B 实施时需要重新设计 server-models 持久化方案并用新 key 写入，例如 `cloud_server_models_meta`）
 - 在 main.ts 里 `console.log('[Migration] URS legacy auth state cleared')`（一次性）
 - 通过 `app_state` 表写一个标记 `urs_cleanup_at = <ISO>`
 
@@ -357,11 +362,13 @@ export function LoginGate({ children }) {
 
 #### `src/renderer/components/LoginModal.tsx`
 
-4 个 tab：密码 / 短信 / 微信扫码 / 注册引导。60s 短信倒计时。错误顶部红条。
+**3 个 tab**（密码 / 短信 / 微信扫码）。**注册走"去注册"内联链接，不放 tab**：登录失败（密码错、短信码错等）时，错误红条下方显示一行链接 "去 RunNode Portal 注册 →"，点击用 `shell.openExternal()` 打开 `${baseUrl}/register` 路径。60s 短信倒计时。错误顶部红条。
 
 #### `src/renderer/components/WechatQrDialog.tsx`
 
 显示二维码 + 状态轮询。`waiting` → 显示"请扫码"；`scanned` → "已扫码，请在手机上确认"；`expired` → "已过期，请刷新"。
+
+超时控制：组件 mount 时启动一个 `useEffect` 内的 `setTimeout(5 * 60 * 1000)`，5 分钟后无论 polling 状态如何都强制 close + 显示"二维码已过期"提示 + 提供"刷新二维码"按钮（重新调 `wechatGetQr`）。组件 unmount 时 `clearTimeout` 取消。
 
 #### `src/shared/cloudAuth/constants.ts`
 
@@ -403,7 +410,7 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 
 - `@journeyapps/sqlcipher` 或 `better-sqlite3-multiple-ciphers`（用哪个走 Plan 阶段拍板）
 - `uuid`（已有）
-- `node-machine-id` 暂不引（SQLCipher 自带 key 派生）
+- `node-machine-id` 用于派生 SQLCipher 加密 key（`sha256("WeSight-CloudDB-v1\0" + machineId + appName)`），保证 DB 文件不能被简单复制到另一台机器解开。**不引 `node-machine-id` 之外的额外 keytar**，避免原生绑定。
 
 ### 删除
 
@@ -429,6 +436,7 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 | `src/main/main.ts` | 在 `app.whenReady()` 早期调 `legacyAuthCleanup.run()`；删所有 `auth:*` handler + deep link 注册；新增 `cloud:auth:*` 和 `cloud:device:*` 注册 |
 | `src/renderer/services/i18n.ts` | 新增 key：`authCloud*`、`authMethodPassword` / `authMethodSms` / `authMethodWechat`、`authWechatWaiting` / `authWechatScanned` / `authWechatExpired`、`authSmsCountdown`、`authCloudLoggedOutToast`、`authCloudFirstRunTitle` 等；删除 `authPlanFree` / `authPlanStandard` / `authPlanAdvanced` / `authPlanPro` / `authQuotaExhausted` / `authCreditsUnit` / `authExpiresAt` 等（B 才需要） |
 | `src/renderer/services/config.ts` | 新增 `cloudApiBaseUrl` 字段（用户可在 Settings 改） |
+| `src/renderer/components/Settings/CloudApiSection.tsx` | 新增 Settings 区块：RunNode API 地址输入框 + "测试连接"按钮（调 `cloud:auth:get-status` 验证 baseUrl + 网络可达性）+ "保存"按钮（写回 `configService.cloudApiBaseUrl` 并触发 `cloudApiBaseUrl` 重新初始化） |
 | `electron-builder.json` | 确保 native module（SQLCipher）打进去 |
 | `package.json` scripts | `pretest` 加 `electron-rebuild`（如果用 native sqlcipher） |
 
@@ -449,13 +457,13 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 
 - 完整登录流程：密码登录 → 持久化 → 模拟"下次启动"读 SQLite → 自动恢复登录
 - 401 → refresh → 重试：mock 第一次 401、第二次 200
-- refresh 失败：mock refresh 返 500 → 触发 `cloud:logged-out` 事件
+- refresh 失败：mock refresh 返 500 → 触发 `cloud:auth:logged-out` 事件
 
 ### 组件测试（Testing Library + Vitest）
 
 | 文件 | 覆盖 |
 |---|---|
-| `LoginModal.test.tsx` | 4 tab 切换；60s 倒计时归零；错误信息顶部红条展示 |
+| `LoginModal.test.tsx` | 3 tab 切换（密码 / 短信 / 微信扫码）；60s 倒计时归零；错误信息顶部红条展示；登录失败时"去注册"内联链接可见 |
 | `WechatQrDialog.test.tsx` | polling 状态机：`waiting` → `scanned` → `confirmed` 跳转；`expired` 按钮可用 |
 | `LoginGate.test.tsx` | 首次启动 → 显示全屏；登录后 → 渲染 children；登出 → 弹 LoginModal |
 
@@ -476,11 +484,12 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 | 错误类型 | 来源 | 处理 |
 |---|---|---|
 | 网络层 | `net.fetch` reject | toast "网络异常"；不重试 |
-| 业务层 4xx 鉴权类 | 401 / 403 | 401：refresh + 重试（一次）；refresh 失败 → `cloud:logged-out` + 弹登录框；403：toast |
+| 业务层 4xx 鉴权类 | 401 / 403 | 401：refresh + 重试（一次）；refresh 失败 → `cloud:auth:logged-out` + 弹登录框；403：toast |
 | 业务层 4xx 参数类 | 400 / 422 | 透传 `error` 字段，LoginModal 顶部红条 |
 | 业务层 5xx | 500/502/503 | toast "服务暂时不可用"；不重试；log error |
 | Token 即将过期 | 客户端 | 主动 refresh，调用方无感 |
-| Token 已过期 | 401 | refresh 成功 → 透明；refresh 失败 → `cloud:logged-out` |
+| Token 已过期 | 401 | refresh 成功 → 透明；refresh 失败 → `cloud:auth:logged-out` |
+| 设备心跳失败 | network 5xx / timeout | `cloudUserDeviceService.heartbeat()` catch 异常，**仅 `console.warn` + 等下一周期重试**；不抛错、不重试当前次、不影响登录态。RunNode 端的设备 deregistration 容忍策略不在 A 范围。 |
 | 微信 QR 过期 | 5min 无响应 / `expired` | "刷新二维码"按钮 |
 | 首次启动 SQLite 损坏 | `cloud_tokens` 读不出 | `legacyAuthCleanup` 兜底清表 + 走 `unauthenticated` |
 | baseUrl 配错 | 所有 RunNode API 5xx/4xx | Settings 加"测试连接"按钮；启动不阻塞 |
