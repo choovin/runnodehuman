@@ -236,7 +236,7 @@ CloudFetch.doFetch(url, init)
 5. main: cloudUserDeviceStore.init()
 6. main: cloudUserDeviceService.init()  // 启动 main 进程 setInterval 心跳调度器
 7. main: cloudApiBaseUrl.init()  // 读 VITE 编译期值 + Settings
-8. main: 注册 cloud:auth:* 和 cloud:device:* IPC handlers
+8. main: 注册 cloud:auth:* IPC handlers（**不注册 cloud:device:*，device 服务全部在 main 内部 self-schedule，renderer 永不调**）
 9. main: 创建 BrowserWindow
 10. renderer: App.tsx mount
 11. renderer: cloudAuthService.init()  // 读 cloud_tokens, 调 getStatus
@@ -432,10 +432,10 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 |---|---|
 | `src/renderer/App.tsx` | `authService.init()` → `cloudAuthService.init()`；外层套 `<LoginGate>`；删 `onShowLogin` 调用链（Sidebar 改用 cloudAuthSlice） |
 | `src/renderer/components/Sidebar.tsx` | 用户菜单 / 登录入口改读 `cloudAuthSlice`；删 `hideLogin` prop（已不适用） |
-| `src/main/main.ts` | 在 `app.whenReady()` 早期调 `legacyAuthCleanup.run()`；删所有 `auth:*` handler + deep link 注册；新增 `cloud:auth:*` 和 `cloud:device:*` 注册 |
+| `src/main/main.ts` | 在 `app.whenReady()` 早期调 `legacyAuthCleanup.run()`；删所有 `auth:*` handler + deep link 注册；新增 `cloud:auth:*` 注册（**device 服务无 IPC handler**） |
 | `src/renderer/services/i18n.ts` | 新增 key：`authCloud*`、`authMethodPassword` / `authMethodSms` / `authMethodWechat`、`authWechatWaiting` / `authWechatScanned` / `authWechatExpired`、`authSmsCountdown`、`authCloudLoggedOutToast`、`authCloudFirstRunTitle` 等；删除 `authPlanFree` / `authPlanStandard` / `authPlanAdvanced` / `authPlanPro` / `authQuotaExhausted` / `authCreditsUnit` / `authExpiresAt` 等（B 才需要） |
 | `src/renderer/services/config.ts` | 新增 `cloudApiBaseUrl` 字段（用户可在 Settings 改） |
-| `src/renderer/components/Settings/CloudApiSection.tsx` | 新增 Settings 区块：RunNode API 地址输入框 + "测试连接"按钮（走 main 进程 `probeCloudBaseUrl()`：故意用缺字段的 POST 请求探活，4xx 视为"已连通"、网络 reject 视为"失败"）+ "保存"按钮（写回 `configService.cloudApiBaseUrl` 并触发 `cloudApiBaseUrl` 重新初始化） |
+| `src/renderer/components/Settings/CloudApiSection.tsx` | 新增 Settings 区块：RunNode API 地址输入框 + "测试连接"按钮（走 main 进程 `probeCloudBaseUrl()`：故意用缺字段的 POST 请求探活，4xx 视为"已连通"、网络 reject 视为"失败"）+ "保存"按钮（写回 `configService.cloudApiBaseUrl`，下次 `getCloudApiBaseUrl()` 调用即生效） |
 | `electron-builder.json` | 确保 native module（SQLCipher）打进去 |
 | `package.json` scripts | `pretest` 加 `electron-rebuild`（如果用 native sqlcipher） |
 
@@ -517,7 +517,7 @@ VITE_CLOUD_API_BASE_URL=https://api.runnode.example.com
 ## Migration Path
 
 **硬重置**（用户决定：clean_break）：
-1. 旧 `auth_tokens` 表 / `server_models_meta` 表 / `app_state` 里 `urs_cleanup_at` 缺失 → 触发 `legacyAuthCleanup.run()`
+1. 启动时若 `app_state.urs_cleanup_at` 缺失 → 触发 `legacyAuthCleanup.run()`。`run()` 内部按 kv 存在性逐项删除（idempotent）：`auth_tokens`、`server_models_meta`，最后写 `urs_cleanup_at = <ISO>` 标记完成；之后 `app_state.urs_cleanup_at` 存在则跳过（避免重复）
 2. 删 deep link handler 注册（不再需要 `wesight://` 协议）
 3. 用户第一次启动 A 完成后看到 LoginGate → 重新登录 RunNode
 4. 旧的 URS 账号无法迁移（URS 与 RunNode 是两套用户体系，business decision：强行迁移意义不大）
