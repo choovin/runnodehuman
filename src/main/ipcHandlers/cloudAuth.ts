@@ -1,9 +1,10 @@
-import { ipcMain, webContents, type IpcMainInvokeEvent } from 'electron';
 import type Database from 'better-sqlite3-multiple-ciphers';
+import { ipcMain, webContents } from 'electron';
 import type { EventEmitter } from 'events';
-import { CloudAuthService } from '../services/cloudAuth';
+
 import { CloudAuthChannel } from '../../shared/cloudAuth/constants';
 import { probeCloudBaseUrl } from '../probeCloudBaseUrl';
+import { CloudAuthService } from '../services/cloudAuth';
 import { setCloudApiBaseUrlOverride } from '../utils/cloudApiBaseUrl';
 
 export function registerCloudAuthHandlers(
