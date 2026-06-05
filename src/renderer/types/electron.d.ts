@@ -539,6 +539,36 @@ interface ProfileSummaryData {
   creditItems: CreditItem[];
 }
 
+export interface CloudUserInfo {
+  id: string | number;
+  username: string;
+  nickname?: string;
+  mobile?: string;
+  avatar?: string;
+  subscriptionPlan?: string;
+  coin?: number;
+}
+
+export interface CloudAuthStatus {
+  isLoggedIn: boolean;
+  user?: CloudUserInfo;
+  hasCompletedFirstLogin: boolean;
+}
+
+export interface WechatQrResult {
+  success: boolean;
+  qrUrl?: string;
+  ticket?: string;
+  expiresIn?: number;
+  error?: string;
+}
+
+export interface WechatPollResult {
+  status: 'waiting' | 'scanned' | 'confirmed' | 'expired';
+  code?: string;
+  state?: string;
+}
+
 interface IElectronAPI {
   platform: string;
   arch: string;
@@ -956,7 +986,21 @@ interface IElectronAPI {
     oauthLogin: () => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
     oauthRefresh: (refreshToken: string) => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
     onOAuthProgress: (callback: (message: string) => void) => () => void;
-  },
+  };
+  cloudAuth: {
+    loginWithPassword: (payload: { mobile: string; password: string }) => Promise<{ success: boolean; userInfo?: CloudUserInfo; error?: string }>;
+    sendSmsCode: (payload: { mobile: string }) => Promise<{ success: boolean; error?: string }>;
+    loginWithSms: (payload: { mobile: string; code: string }) => Promise<{ success: boolean; userInfo?: CloudUserInfo; error?: string }>;
+    wechatGetQr: (payload: { redirectUri: string }) => Promise<WechatQrResult>;
+    wechatPoll: (payload: { ticket: string }) => Promise<WechatPollResult>;
+    loginWithWechat: (payload: { code: string; state: string }) => Promise<{ success: boolean; userInfo?: CloudUserInfo; error?: string }>;
+    logout: () => Promise<{ success: boolean }>;
+    getStatus: () => Promise<CloudAuthStatus>;
+    onLoggedOut: (handler: () => void) => () => void;
+    onLoginSuccess: (handler: (payload: { user: CloudUserInfo }) => void) => () => void;
+  };
+  probeCloudBaseUrl: () => Promise<{ ok: boolean; error?: string }>;
+  setCloudApiBaseUrl: (url: string | null) => Promise<{ success: boolean }>;
   feishu: {
     install: {
       qrcode: (isLark: boolean) => Promise<{
