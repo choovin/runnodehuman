@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
+import { CloudPlatformProviderChannel } from '../shared/cloudPlatformProvider/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import type { CoworkFileActivity } from '../shared/cowork/fileActivity';
 import { DialogIpcChannel } from '../shared/dialog/constants';
@@ -750,6 +751,23 @@ contextBridge.exposeInMainWorld('electron', {
       const wrapped = (_e: any, payload: any) => handler(payload);
       ipcRenderer.on('cloud:auth:login-success', wrapped);
       return () => ipcRenderer.off('cloud:auth:login-success', wrapped);
+    },
+  },
+  cloudPlatformProvider: {
+    get: () => ipcRenderer.invoke(CloudPlatformProviderChannel.Get),
+    sync: () => ipcRenderer.invoke(CloudPlatformProviderChannel.Sync),
+    setOverride: (payload: { baseUrl?: string; apiKey?: string }) =>
+      ipcRenderer.invoke(CloudPlatformProviderChannel.SetOverride, payload),
+    resetDefault: () => ipcRenderer.invoke(CloudPlatformProviderChannel.ResetDefault),
+    onUpdate: (handler: (record: any) => void) => {
+      const wrapped = (_e: any, payload: any) => handler(payload?.record ?? payload);
+      ipcRenderer.on(CloudPlatformProviderChannel.UpdatedEvent, wrapped);
+      return () => ipcRenderer.removeListener(CloudPlatformProviderChannel.UpdatedEvent, wrapped);
+    },
+    onSyncFailed: (handler: (payload: { error: string }) => void) => {
+      const wrapped = (_e: any, payload: { error: string }) => handler(payload);
+      ipcRenderer.on(CloudPlatformProviderChannel.SyncFailedEvent, wrapped);
+      return () => ipcRenderer.removeListener(CloudPlatformProviderChannel.SyncFailedEvent, wrapped);
     },
   },
   probeCloudBaseUrl: () => ipcRenderer.invoke('cloud:probe-base-url'),
