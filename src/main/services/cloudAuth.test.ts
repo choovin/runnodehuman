@@ -29,7 +29,7 @@ describe('CloudAuthService', () => {
     dbInstance.pragma(`cipher='sqlcipher'`);
     dbInstance.pragma(`key="x'${'00'.repeat(32)}'"`);
     dbInstance.exec(`
-      CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
       CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     mockFetch = vi.fn();

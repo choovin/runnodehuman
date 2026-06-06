@@ -14,9 +14,10 @@ export async function run(db: Database.Database): Promise<void> {
   }
 
   // Mark complete
-  db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run(
+  db.prepare('INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)').run(
     CLEANUP_KEY,
-    new Date().toISOString()
+    new Date().toISOString(),
+    Date.now()
   );
 
   console.log('[Migration] URS legacy auth state cleared');

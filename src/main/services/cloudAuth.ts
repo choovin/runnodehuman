@@ -299,14 +299,14 @@ export class CloudAuthService {
 
   private persistUserInfo(user: CloudUserInfo): void {
     this.db.prepare(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'
-    ).run('cloud_user_info', JSON.stringify(user));
+      'INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)'
+    ).run('cloud_user_info', JSON.stringify(user), Date.now());
   }
 
   private markFirstLoginComplete(): void {
     this.db.prepare(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'
-    ).run('has_completed_first_login', 'true');
+      'INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)'
+    ).run('has_completed_first_login', 'true', Date.now());
   }
 
   private broadcastLoggedOut(): void {

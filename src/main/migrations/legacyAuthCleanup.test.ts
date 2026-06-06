@@ -21,7 +21,7 @@ describe('legacyAuthCleanup', () => {
     dbInstance = new Database(path.join(tmpDir, 'test.db'));
     dbInstance.pragma(`cipher='sqlcipher'`);
     dbInstance.pragma(`key="x'${'00'.repeat(32)}'"`);
-    dbInstance.exec(`CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    dbInstance.exec(`CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);`);
     vi.resetModules();
   });
 
