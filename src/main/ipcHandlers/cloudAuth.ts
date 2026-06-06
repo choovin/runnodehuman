@@ -82,7 +82,8 @@ export async function probeAndReport(): Promise<{ ok: boolean; error?: string }>
 }
 
 export function registerCloudPlatformProviderHandlers(
-  service: CloudPlatformProviderService
+  service: CloudPlatformProviderService,
+  broadcaster: EventEmitter
 ): void {
   ipcMain.handle(CloudPlatformProviderChannel.Get, () => service.get());
   ipcMain.handle(CloudPlatformProviderChannel.Sync, () => service.sync());
@@ -94,6 +95,23 @@ export function registerCloudPlatformProviderHandlers(
     }
   );
   ipcMain.handle(CloudPlatformProviderChannel.ResetDefault, () => service.resetDefault());
+
+  // Re-broadcast events to all BrowserWindows
+  broadcaster.on(CloudPlatformProviderChannel.UpdatedEvent, (record) => {
+    for (const wc of webContents.getAllWebContents()) {
+      wc.send(CloudPlatformProviderChannel.UpdatedEvent, record);
+    }
+  });
+  broadcaster.on(CloudPlatformProviderChannel.SyncStartedEvent, () => {
+    for (const wc of webContents.getAllWebContents()) {
+      wc.send(CloudPlatformProviderChannel.SyncStartedEvent, undefined);
+    }
+  });
+  broadcaster.on(CloudPlatformProviderChannel.SyncFailedEvent, (payload) => {
+    for (const wc of webContents.getAllWebContents()) {
+      wc.send(CloudPlatformProviderChannel.SyncFailedEvent, payload);
+    }
+  });
 }
 
 export { setCloudApiBaseUrlOverride };

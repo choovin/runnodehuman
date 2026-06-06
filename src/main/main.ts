@@ -7435,7 +7435,7 @@ if (!gotTheLock) {
       cloudBroadcaster
     );
     void platformProviderService.init();
-    registerCloudPlatformProviderHandlers(platformProviderService);
+    registerCloudPlatformProviderHandlers(platformProviderService, cloudBroadcaster);
 
     console.log('[Main] initApp: creating window');
     createWindow();
