@@ -312,7 +312,7 @@ export function parseNewApiConfig(raw: unknown): ParserResult<PlatformProviderCo
 #### `src/main/services/cloudPlatformProviderStore.ts`
 ```ts
 import type Database from 'better-sqlite3-multiple-ciphers';
-import type { CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/parsers';
+import type { CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/types';
 
 const KEY = 'current';
 
@@ -360,10 +360,12 @@ import type { EventEmitter } from 'events';
 import type Database from 'better-sqlite3-multiple-ciphers';
 import { CloudAuthService } from './cloudAuth';
 import { CloudPlatformProviderStore } from './cloudPlatformProviderStore';
-import { parseNewApiConfig, type CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/parsers';
+import { parseNewApiConfig } from '../../shared/cloudPlatformProvider/parsers';
+import type { CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/types';
 import {
   PlatformProviderSyncThresholdMs,
   PlatformProviderConfigPath,
+  CloudPlatformProviderChannel,
 } from '../../shared/cloudPlatformProvider/constants';
 import { CloudAuthChannel } from '../../shared/cloudAuth/constants';
 
@@ -424,7 +426,7 @@ export class CloudPlatformProviderService {
 
         if (!resp.ok) {
           const err = `HTTP ${resp.status}`;
-          this.broadcaster.emit('cloud:platform-provider:sync-failed', { error: err });
+          this.broadcaster.emit(CloudPlatformProviderChannel.SyncFailedEvent, { error: err });
           return false;
         }
 
@@ -443,11 +445,11 @@ export class CloudPlatformProviderService {
           userOverride: existing?.userOverride,
         };
         await this.store.save(record);
-        this.broadcaster.emit('cloud:platform-provider:updated', { record });
+        this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
         return true;
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
-        this.broadcaster.emit('cloud:platform-provider:sync-failed', { error: err });
+        this.broadcaster.emit(CloudPlatformProviderChannel.SyncFailedEvent, { error: err });
         return false;
       } finally {
         this.inFlightSync = null;
@@ -482,7 +484,7 @@ export class CloudPlatformProviderService {
       },
     };
     await this.store.save(record);
-    this.broadcaster.emit('cloud:platform-provider:updated', { record });
+    this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
     return { success: true };
   }
 
@@ -497,7 +499,7 @@ export class CloudPlatformProviderService {
       lastSyncedAt: existing.lastSyncedAt,
     };
     await this.store.save(record);
-    this.broadcaster.emit('cloud:platform-provider:updated', { record });
+    this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
     // Immediately re-sync to keep cloud values fresh
     void this.sync().catch((e) => console.error('[CloudPlatformProvider] post-reset sync failed:', e));
     return { success: true };
@@ -658,7 +660,7 @@ export function CloudPlatformProviderSection() {
 ```ts
 import { store } from '../store';
 import { setPlatformProvider } from '../store/slices/cloudAuthSlice';
-import { CloudPlatformProviderChannel } from '../../shared/cloudPlatformProvider/constants';
+import type { CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/types';
 
 class CloudPlatformProviderService {
   private unsubUpdated: (() => void) | null = null;
@@ -667,10 +669,10 @@ class CloudPlatformProviderService {
   async init(): Promise<void> {
     this.destroy();
     await this.refresh();
-    this.unsubUpdated = window.electron.cloudPlatformProvider.onUpdated((payload) => {
+    this.unsubUpdated = window.electron.cloudPlatformProvider.onUpdated((payload: { record: CloudPlatformProviderRecord }) => {
       store.dispatch(setPlatformProvider(payload.record));
     });
-    this.unsubFailed = window.electron.cloudPlatformProvider.onSyncFailed((payload) => {
+    this.unsubFailed = window.electron.cloudPlatformProvider.onSyncFailed((payload: { error: string }) => {
       console.error('[CloudPlatformProvider] sync failed:', payload.error);
     });
   }
@@ -740,7 +742,7 @@ import { registerCloudPlatformProviderHandlers } from './ipcHandlers/cloudAuth';
 // 紧接 cloudAuth 注册之后：
 const platformProviderService = new CloudPlatformProviderService(
   getStore().getDatabase(),
-  // cloudAuthService 实例
+  cloudAuthService,  // 注入 CloudAuthService 引用，用于 fetchMemberAuthorized
   broadcaster,
 );
 void platformProviderService.init();
@@ -795,21 +797,25 @@ async init(): Promise<void> {
 #### `src/main/preload.ts` — 暴露新 IPC
 
 ```ts
+import { CloudPlatformProviderChannel } from '../shared/cloudPlatformProvider/constants';
+import type { CloudPlatformProviderRecord } from '../shared/cloudPlatformProvider/types';
+
+// in contextBridge.exposeInMainWorld:
 cloudPlatformProvider: {
-  get: () => ipcRenderer.invoke('cloud:platform-provider:get'),
-  sync: () => ipcRenderer.invoke('cloud:platform-provider:sync'),
+  get: () => ipcRenderer.invoke(CloudPlatformProviderChannel.Get),
+  sync: () => ipcRenderer.invoke(CloudPlatformProviderChannel.Sync),
   setOverride: (payload: { baseUrl?: string; apiKey?: string }) =>
-    ipcRenderer.invoke('cloud:platform-provider:set-override', payload),
-  resetDefault: () => ipcRenderer.invoke('cloud:platform-provider:reset-default'),
+    ipcRenderer.invoke(CloudPlatformProviderChannel.SetOverride, payload),
+  resetDefault: () => ipcRenderer.invoke(CloudPlatformProviderChannel.ResetDefault),
   onUpdated: (handler: (payload: { record: CloudPlatformProviderRecord }) => void) => {
-    const wrapped = (_e: any, payload: any) => handler(payload);
-    ipcRenderer.on('cloud:platform-provider:updated', wrapped);
-    return () => ipcRenderer.off('cloud:platform-provider:updated', wrapped);
+    const wrapped = (_e: unknown, payload: { record: CloudPlatformProviderRecord }) => handler(payload);
+    ipcRenderer.on(CloudPlatformProviderChannel.UpdatedEvent, wrapped);
+    return () => ipcRenderer.off(CloudPlatformProviderChannel.UpdatedEvent, wrapped);
   },
   onSyncFailed: (handler: (payload: { error: string }) => void) => {
-    const wrapped = (_e: any, payload: any) => handler(payload);
-    ipcRenderer.on('cloud:platform-provider:sync-failed', wrapped);
-    return () => ipcRenderer.off('cloud:platform-provider:sync-failed', wrapped);
+    const wrapped = (_e: unknown, payload: { error: string }) => handler(payload);
+    ipcRenderer.on(CloudPlatformProviderChannel.SyncFailedEvent, wrapped);
+    return () => ipcRenderer.off(CloudPlatformProviderChannel.SyncFailedEvent, wrapped);
   },
 },
 ```
@@ -872,6 +878,7 @@ cloudPlatformProvider: {
 - ⚠️ **baseUrl 末尾 `/v1` 规范化**：RunNode 后端若已返回 `/v1` 结尾的，spec 用 `\/v1$/i` 检测避免重复加
 - ⚠️ **24h 阈值判定来源**：用持久化 `lastSyncedAt`（重启后仍能判断），不用 in-memory
 - ⚠️ **override + sync 期间网络失败的语义**：sync 失败**保留旧 override**，用户不会被云端覆盖
+- ⚠️ **override 长期不下云端的云值**：`ensureSynced` 在有 userOverride 时直接跳过，所以一旦用户设了 override，**云端 baseUrl/apiKey 可能 30+ 天不更新**（直到用户主动 reset 或点手动 sync）。这与"云端胜"的预期不完全一致。可接受的折中：override 本来就是"我比云端清楚"，让 user 主动选择何时恢复。如果用户预期是"override 也要每日检查云端变化"，需要不同的语义（spec 当前不覆盖这种需求）
 
 ## Migration
 
