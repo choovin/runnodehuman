@@ -192,12 +192,14 @@ Settings / Account 区块 mount
 
 | Channel | 方向 | Payload | 响应 |
 |---|---|---|---|
-| `cloud:platform-provider:get` | R→M | — | `{ baseUrl, apiKey, isOverridden, lastSyncedAt, userOverride? }` |
-| `cloud:platform-provider:sync` | R→M | — | `{ success, baseUrl?, apiKey?, lastSyncedAt?, error? }` |
-| `cloud:platform-provider:set-override` | R→M | `{ baseUrl?: string, apiKey?: string }` | `{ success, isOverridden, error? }` |
-| `cloud:platform-provider:reset-default` | R→M | — | `{ success, error? }` |
-| `cloud:platform-provider:updated` | M→R | `(event, payload: PlatformProviderSnapshot)` | — |
-| `cloud:platform-provider:sync-failed` | M→R | `(event, { error: string })` | — |
+| `cloud:platform-provider:get` | R→M | — | `CloudPlatformProviderRecord \| null`（原始 record；`isOverridden` 由 slice 算） |
+| `cloud:platform-provider:sync` | R→M | — | `{ success, record?: CloudPlatformProviderRecord, error? }` |
+| `cloud:platform-provider:set-override` | R→M | `{ baseUrl?: string, apiKey?: string }` | `{ success, record?: CloudPlatformProviderRecord, error? }` |
+| `cloud:platform-provider:reset-default` | R→M | — | `{ success, record?: CloudPlatformProviderRecord, error? }` |
+| `cloud:platform-provider:updated` | M→R | `PlatformProviderUpdatedPayload = { record: CloudPlatformProviderRecord }` | — |
+| `cloud:platform-provider:sync-failed` | M→R | `{ error: string }` | — |
+
+> 关键：`isOverridden` 是计算属性（`userOverride != null`），不存不传输。Service 返原始 record，slice 用 `isOverridden()` 算。
 
 ### 启动初始化顺序
 
@@ -380,13 +382,13 @@ export class CloudPlatformProviderService {
 
   async init(): Promise<void> {
     // Listen for successful logins → auto-sync
-    this.unsubLoginSuccess = (...args: unknown[]) => {
-      const handler = (handler: unknown) => handler;
-      void handler;
-    };
-    this.broadcaster.on(CloudAuthChannel.LoginSuccessEvent, () => {
+    const loginHandler = () => {
       void this.sync().catch((e) => console.error('[CloudPlatformProvider] auto-sync failed:', e));
-    });
+    };
+    this.broadcaster.on(CloudAuthChannel.LoginSuccessEvent, loginHandler);
+    this.unsubLoginSuccess = () => {
+      this.broadcaster.off(CloudAuthChannel.LoginSuccessEvent, loginHandler);
+    };
 
     // 24h idempotent check on startup
     void this.ensureSynced().catch((e) => console.error('[CloudPlatformProvider] ensureSynced failed:', e));
@@ -506,16 +508,20 @@ export class CloudPlatformProviderService {
 #### `src/renderer/components/Settings/CloudPlatformProviderSection.tsx`
 ```tsx
 import React, { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+import type { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
 import { cloudPlatformProviderService } from '../../services/cloudPlatformProvider';
+import { effective as effectiveOf } from '../../../shared/cloudPlatformProvider/parsers';
 
 export function CloudPlatformProviderSection() {
-  const [effective, setEffective] = useState<{ baseUrl: string; apiKey: string } | null>(null);
-  const [isOverridden, setIsOverridden] = useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const record = useSelector((s: RootState) => s.cloudAuth.platformProvider);
+  const isOverridden = useSelector((s: RootState) => s.cloudAuth.platformProviderIsOverridden);
+  const lastSyncedAt = useSelector((s: RootState) => s.cloudAuth.platformProviderLastSyncedAt);
+
   const [overrideBaseUrl, setOverrideBaseUrl] = useState('');
   const [overrideApiKey, setOverrideApiKey] = useState('');
-  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -523,13 +529,16 @@ export function CloudPlatformProviderSection() {
     void cloudPlatformProviderService.refresh();
   }, []);
 
+  const eff = record ? effectiveOf(record) : null;
+
   const handleSaveOverride = async () => {
+    setErrorMessage(null);
     const r = await cloudPlatformProviderService.setOverride({
       baseUrl: overrideBaseUrl || undefined,
       apiKey: overrideApiKey || undefined,
     });
     if (!r.success) {
-      setTestResult({ ok: false, error: r.error });
+      setErrorMessage(r.error ?? 'save failed');
       return;
     }
     setSavedFlash(true);
@@ -539,15 +548,16 @@ export function CloudPlatformProviderSection() {
   };
 
   const handleReset = async () => {
+    setErrorMessage(null);
     await cloudPlatformProviderService.resetDefault();
   };
 
   const handleSync = async () => {
     setSyncing(true);
-    setTestResult(null);
+    setErrorMessage(null);
     try {
       const r = await cloudPlatformProviderService.sync();
-      if (!r.success) setTestResult({ ok: false, error: r.error });
+      if (!r.success) setErrorMessage(r.error ?? 'sync failed');
     } finally {
       setSyncing(false);
     }
@@ -557,23 +567,23 @@ export function CloudPlatformProviderSection() {
     <div className="space-y-3">
       <h3 className="text-sm font-semibold">{i18nService.t('authCloudPlatformTitle')}</h3>
 
-      {effective && (
+      {eff && (
         <div className="rounded border border-border bg-muted/30 p-3 text-sm space-y-1">
           <div>
             <span className="text-muted-foreground">{i18nService.t('authCloudPlatformBaseUrl')}: </span>
-            <span className="font-mono">{effective.baseUrl}</span>
+            <span data-testid="platform-effective-baseurl" className="font-mono">{eff.baseUrl}</span>
           </div>
           <div>
             <span className="text-muted-foreground">{i18nService.t('authCloudPlatformApiKey')}: </span>
-            <span className="font-mono">{'•'.repeat(Math.min(effective.apiKey.length, 24))}</span>
+            <span data-testid="platform-effective-apikey" className="font-mono">{'•'.repeat(Math.min(eff.apiKey.length, 24))}</span>
           </div>
           {isOverridden && (
-            <div className="text-xs text-amber-500">
+            <div data-testid="platform-overridden-badge" className="text-xs text-amber-500">
               {i18nService.t('authCloudPlatformOverridden')}
             </div>
           )}
           {lastSyncedAt && (
-            <div className="text-xs text-muted-foreground">
+            <div data-testid="platform-last-synced" className="text-xs text-muted-foreground">
               {i18nService.t('authCloudPlatformLastSyncedAt', {
                 at: new Date(lastSyncedAt).toLocaleString(),
               })}
@@ -634,9 +644,9 @@ export function CloudPlatformProviderSection() {
         )}
       </div>
 
-      {testResult && (
-        <p className={testResult.ok ? 'text-sm text-green-500' : 'text-sm text-red-500'}>
-          {testResult.error ?? ''}
+      {errorMessage && (
+        <p data-testid="platform-error" className="text-sm text-red-500">
+          {errorMessage}
         </p>
       )}
     </div>
@@ -743,13 +753,12 @@ registerCloudPlatformProviderHandlers(platformProviderService);
 ```ts
 interface CloudAuthState {
   // ... existing
-  coin: number;
-  subscriptionPlan: string;
   platformProvider: CloudPlatformProviderRecord | null;
   platformProviderIsOverridden: boolean;
   platformProviderLastSyncedAt: number | null;
 }
-```
+
+> `coin` 和 `subscriptionPlan` **不放在 cloudAuthSlice 顶层**，只在 `user` 对象里。A 已经把 user 存了，B 沿用。Sidebar 直接读 `state.cloudAuth.user.coin` / `user.subscriptionPlan`。这样避免双份同步。
 
 加 reducer：
 ```ts
@@ -757,10 +766,6 @@ setPlatformProvider(state, action: PayloadAction<CloudPlatformProviderRecord | n
   state.platformProvider = action.payload;
   state.platformProviderIsOverridden = isOverridden(action.payload);
   state.platformProviderLastSyncedAt = action.payload?.lastSyncedAt ?? null;
-  // Also sync user coin / plan
-  if (action.payload) {
-    // user coin/plan is in the user record, not platformProvider — keep separate
-  }
 }
 ```
 
