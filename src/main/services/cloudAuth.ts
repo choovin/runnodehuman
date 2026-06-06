@@ -39,7 +39,13 @@ export class CloudAuthService {
     await this.deviceService.init();
   }
 
-  async getStatus(): Promise<{ isLoggedIn: boolean; user?: CloudUserInfo; hasCompletedFirstLogin: boolean }> {
+  async getStatus(): Promise<{
+    isLoggedIn: boolean;
+    user?: CloudUserInfo;
+    hasCompletedFirstLogin: boolean;
+    coin: number;
+    subscriptionPlan: string;
+  }> {
     const tokens = await this.tokenStore.load();
     const userRaw = this.db.prepare("SELECT value FROM kv WHERE key = 'cloud_user_info'").get() as
       | { value: string }
@@ -55,6 +61,8 @@ export class CloudAuthService {
       isLoggedIn: !!tokens,
       user,
       hasCompletedFirstLogin,
+      coin: user?.coin ?? 0,
+      subscriptionPlan: user?.subscriptionPlan ?? '',
     };
   }
 

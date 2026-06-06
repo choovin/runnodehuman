@@ -206,6 +206,38 @@ describe('CloudAuthService', () => {
     });
   });
 
+  describe('getStatus with coin and subscriptionPlan', () => {
+    test('returns coin and subscriptionPlan from user', async () => {
+      dbInstance.prepare("INSERT INTO kv (key, value) VALUES (?, ?)")
+        .run('cloud_user_info', JSON.stringify({
+          id: 1, username: 'u', coin: 500, subscriptionPlan: 'Plus',
+        }));
+      const { CloudAuthService } = await import('./cloudAuth');
+      const svc = new CloudAuthService(dbInstance, broadcaster);
+      const status = await svc.getStatus();
+      expect(status.coin).toBe(500);
+      expect(status.subscriptionPlan).toBe('Plus');
+    });
+
+    test('returns coin=0 and empty plan when user not set', async () => {
+      const { CloudAuthService } = await import('./cloudAuth');
+      const svc = new CloudAuthService(dbInstance, broadcaster);
+      const status = await svc.getStatus();
+      expect(status.coin).toBe(0);
+      expect(status.subscriptionPlan).toBe('');
+    });
+
+    test('handles partial user info (coin but no plan)', async () => {
+      dbInstance.prepare("INSERT INTO kv (key, value) VALUES (?, ?)")
+        .run('cloud_user_info', JSON.stringify({ id: 1, username: 'u', coin: 100 }));
+      const { CloudAuthService } = await import('./cloudAuth');
+      const svc = new CloudAuthService(dbInstance, broadcaster);
+      const status = await svc.getStatus();
+      expect(status.coin).toBe(100);
+      expect(status.subscriptionPlan).toBe('');
+    });
+  });
+
   describe('logout', () => {
     test('clears local tokens even if remote logout fails', async () => {
       const { CloudAuthTokenStore } = await import('./cloudAuthTokenStore');
