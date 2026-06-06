@@ -50,22 +50,26 @@ describe('CloudAuthService', () => {
         json: async () => ({
           code: 0,
           data: {
+            userId: 1,
             accessToken: 'at-1',
             refreshToken: 'rt-1',
-            expiresIn: 7200,
-            userInfo: { id: 1, username: 'u' },
+            expiresTime: Date.now() + 7200 * 1000,
           },
         }),
       });
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ code: 0, data: { id: 1, username: 'u', subscriptionPlan: 'Plus', coin: 100 } }),
+        json: async () => ({
+          code: 0,
+          data: { id: 1, nickname: 'u', vip: { vipName: 'Plus' }, coin: 100 },
+        }),
       });
       const { CloudAuthService } = await import('./cloudAuth');
       const svc = new CloudAuthService(dbInstance, broadcaster);
       const result = await svc.loginWithPassword('13800138000', 'pwd');
       expect(result.success).toBe(true);
       expect(result.userInfo?.username).toBe('u');
+      expect(result.userInfo?.subscriptionPlan).toBe('Plus');
     });
 
     test('returns error on business failure', async () => {
@@ -91,7 +95,7 @@ describe('CloudAuthService', () => {
         ok: true,
         json: async () => ({
           code: 0,
-          data: { accessToken: 'new-at', refreshToken: 'new-rt', expiresIn: 7200 },
+          data: { accessToken: 'new-at', refreshToken: 'new-rt', expiresTime: Date.now() + 7200 * 1000 },
         }),
       });
 
@@ -111,7 +115,7 @@ describe('CloudAuthService', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ code: 0, data: { accessToken: 'new-at', expiresIn: 7200 } }),
+        json: async () => ({ code: 0, data: { accessToken: 'new-at', expiresTime: Date.now() + 7200 * 1000 } }),
       });
 
       const { CloudAuthService } = await import('./cloudAuth');
@@ -159,7 +163,7 @@ describe('CloudAuthService', () => {
 
       resolveFn!({
         ok: true,
-        json: async () => ({ code: 0, data: { accessToken: 'new', expiresIn: 7200 } }),
+        json: async () => ({ code: 0, data: { accessToken: 'new', expiresTime: Date.now() + 7200 * 1000 } }),
       });
 
       const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
@@ -195,7 +199,7 @@ describe('CloudAuthService', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ code: 0, data: { accessToken: 'new', expiresIn: 7200 } }),
+        json: async () => ({ code: 0, data: { accessToken: 'new', expiresTime: Date.now() + 7200 * 1000 } }),
       });
 
       const { CloudAuthService } = await import('./cloudAuth');

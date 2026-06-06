@@ -215,7 +215,9 @@ export class CloudAuthService {
         await this.tokenStore.save({
           accessToken: parsed.value.accessToken,
           refreshToken: parsed.value.refreshToken || stored.refreshToken,
-          expiresAt: Date.now() + parsed.value.expiresIn * 1000,
+          // parsed.value.expiresIn is the absolute access-token expiry in ms epoch
+          // (RunNode: data.expiresTime). Store it directly as CloudAuthTokens.expiresAt.
+          expiresAt: parsed.value.expiresIn,
         });
         return true;
       } catch (e) {
@@ -268,7 +270,9 @@ export class CloudAuthService {
       await this.tokenStore.save({
         accessToken: parsed.value.accessToken,
         refreshToken: parsed.value.refreshToken,
-        expiresAt: Date.now() + parsed.value.expiresIn * 1000,
+        // parsed.value.expiresIn is the absolute access-token expiry in ms epoch
+        // (RunNode: data.expiresTime). Store it directly as CloudAuthTokens.expiresAt.
+        expiresAt: parsed.value.expiresIn,
       });
 
       void this.deviceService.afterLogin().catch((e) => console.warn('[CloudAuth] device register:', e));
