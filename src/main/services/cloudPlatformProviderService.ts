@@ -9,6 +9,7 @@ import {
 } from '../../shared/cloudPlatformProvider/constants';
 import { parseNewApiConfig } from '../../shared/cloudPlatformProvider/parsers';
 import type { CloudPlatformProviderRecord } from '../../shared/cloudPlatformProvider/types';
+import { getCloudApiBaseUrl } from '../utils/cloudApiBaseUrl';
 import { CloudAuthService } from './cloudAuth';
 import { CloudPlatformProviderStore } from './cloudPlatformProviderStore';
 
@@ -63,7 +64,7 @@ export class CloudPlatformProviderService {
 
     this.inFlightSync = (async () => {
       try {
-        const baseUrl = this.cloudAuth.getCloudApiBaseUrl();
+        const baseUrl = getCloudApiBaseUrl();
         const resp = await this.cloudAuth.fetchMemberAuthorized(
           `${baseUrl}${PlatformProviderConfigPath}`,
           { method: 'GET' }
@@ -77,7 +78,7 @@ export class CloudPlatformProviderService {
 
         const body = await resp.json();
         const parsed = parseNewApiConfig(body);
-        if (!parsed.ok) {
+        if (parsed.ok === false) {
           this.broadcaster.emit(CloudPlatformProviderChannel.SyncFailedEvent, { error: parsed.error });
           return false;
         }

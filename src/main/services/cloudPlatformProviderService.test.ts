@@ -21,6 +21,9 @@ vi.mock('electron', () => ({
 vi.mock('../utils/sqlcipherKey', () => ({
   deriveSqlcipherKey: () => Buffer.alloc(32, 1),
 }));
+vi.mock('../utils/cloudApiBaseUrl', () => ({
+  getCloudApiBaseUrl: () => 'https://test.example.com',
+}));
 vi.mock('./cloudAuth', () => ({
   CloudAuthService: vi.fn(),
 }));
