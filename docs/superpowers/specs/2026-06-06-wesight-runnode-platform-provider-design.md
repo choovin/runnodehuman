@@ -228,6 +228,29 @@ Settings / Account 区块 mount
 
 ### 新增
 
+#### `src/shared/cloudPlatformProvider/types.ts`
+```ts
+// Data model — see "Data model" section above
+export interface CloudPlatformProviderRecord {
+  baseUrl: string;
+  apiKey: string;
+  lastSyncedAt: number;
+  userOverride?: { baseUrl?: string; apiKey?: string };
+}
+
+export const isOverridden = (r: CloudPlatformProviderRecord | null | undefined): boolean =>
+  r?.userOverride != null
+  && (r.userOverride.baseUrl != null || r.userOverride.apiKey != null);
+
+export const effective = (r: CloudPlatformProviderRecord): { baseUrl: string; apiKey: string } => ({
+  baseUrl: r.userOverride?.baseUrl ?? r.baseUrl,
+  apiKey: r.userOverride?.apiKey ?? r.apiKey,
+});
+
+export type PlatformProviderUpdatedPayload = { record: CloudPlatformProviderRecord };
+export type PlatformProviderSyncFailedPayload = { error: string };
+```
+
 #### `src/shared/cloudPlatformProvider/constants.ts`
 ```ts
 export const CloudPlatformProviderChannel = {
@@ -433,7 +456,7 @@ export class CloudPlatformProviderService {
         const body = await resp.json();
         const parsed = parseNewApiConfig(body);
         if (!parsed.ok) {
-          this.broadcaster.emit('cloud:platform-provider:sync-failed', { error: parsed.error });
+          this.broadcaster.emit(CloudPlatformProviderChannel.SyncFailedEvent, { error: parsed.error });
           return false;
         }
 
