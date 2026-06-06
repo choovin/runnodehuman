@@ -56,6 +56,7 @@ export class CloudPlatformProviderService {
   }
 
   async sync(): Promise<{ success: boolean; record?: CloudPlatformProviderRecord; error?: string }> {
+    this.broadcaster.emit(CloudPlatformProviderChannel.SyncStartedEvent, undefined);
     if (this.inFlightSync) {
       const ok = await this.inFlightSync;
       const record = await this.store.load();

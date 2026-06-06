@@ -72,6 +72,23 @@ describe('CloudPlatformProviderService', () => {
       expect(broadcastSpy).toHaveBeenCalledOnce();
     });
 
+    test('emits SyncStartedEvent at the beginning of sync', async () => {
+      mockCloudAuth.fetchMemberAuthorized.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { baseUrl: 'https://api.example.com', apiKey: 'sk-abc' },
+        }),
+      });
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      const events: any[] = [];
+      broadcaster.on('cloud:platform-provider:sync-started', (payload) => events.push(payload));
+      await svc.sync();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toBeUndefined();
+    });
+
     test('returns error and broadcasts failed on 5xx', async () => {
       mockCloudAuth.fetchMemberAuthorized.mockResolvedValueOnce({
         ok: false,

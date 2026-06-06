@@ -4,6 +4,7 @@ export const CloudPlatformProviderChannel = {
   SetOverride: 'cloud:platform-provider:set-override',
   ResetDefault: 'cloud:platform-provider:reset-default',
   UpdatedEvent: 'cloud:platform-provider:updated',
+  SyncStartedEvent: 'cloud:platform-provider:sync-started',
   SyncFailedEvent: 'cloud:platform-provider:sync-failed',
 } as const;
 export type CloudPlatformProviderChannel =
