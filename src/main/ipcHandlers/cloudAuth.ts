@@ -3,8 +3,10 @@ import { ipcMain, webContents } from 'electron';
 import type { EventEmitter } from 'events';
 
 import { CloudAuthChannel } from '../../shared/cloudAuth/constants';
+import { CloudPlatformProviderChannel } from '../../shared/cloudPlatformProvider/constants';
 import { probeCloudBaseUrl } from '../probeCloudBaseUrl';
 import { CloudAuthService } from '../services/cloudAuth';
+import { CloudPlatformProviderService } from '../services/cloudPlatformProviderService';
 import { setCloudApiBaseUrlOverride } from '../utils/cloudApiBaseUrl';
 
 export function registerCloudAuthHandlers(
@@ -77,6 +79,21 @@ export function registerCloudAuthHandlers(
 
 export async function probeAndReport(): Promise<{ ok: boolean; error?: string }> {
   return probeCloudBaseUrl();
+}
+
+export function registerCloudPlatformProviderHandlers(
+  service: CloudPlatformProviderService
+): void {
+  ipcMain.handle(CloudPlatformProviderChannel.Get, () => service.get());
+  ipcMain.handle(CloudPlatformProviderChannel.Sync, () => service.sync());
+  ipcMain.handle(
+    CloudPlatformProviderChannel.SetOverride,
+    (_e, payload: { baseUrl?: string; apiKey?: string }) => {
+      if (!payload) return { success: false, error: 'payload required' };
+      return service.setOverride(payload);
+    }
+  );
+  ipcMain.handle(CloudPlatformProviderChannel.ResetDefault, () => service.resetDefault());
 }
 
 export { setCloudApiBaseUrlOverride };

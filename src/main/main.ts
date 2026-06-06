@@ -68,7 +68,7 @@ import {
   rejectPairingRequest,
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
-import { probeAndReport, registerCloudAuthHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
+import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProviderHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -190,6 +190,7 @@ import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
 import { McpStore } from './mcpStore';
 import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
+import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -7427,7 +7428,14 @@ if (!gotTheLock) {
 
     // Cloud auth (RunNode)
     const cloudBroadcaster = new EventEmitter();
-    registerCloudAuthHandlers(getStore().getDatabase(), cloudBroadcaster);
+    const cloudAuthService = registerCloudAuthHandlers(getStore().getDatabase(), cloudBroadcaster);
+    const platformProviderService = new CloudPlatformProviderService(
+      getStore().getDatabase(),
+      cloudAuthService,
+      cloudBroadcaster
+    );
+    void platformProviderService.init();
+    registerCloudPlatformProviderHandlers(platformProviderService);
 
     console.log('[Main] initApp: creating window');
     createWindow();
