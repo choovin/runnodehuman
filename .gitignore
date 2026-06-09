@@ -16,6 +16,7 @@ __pycache__/
 vendor/openclaw-runtime/
 vendor/openclaw-plugins/
 vendor/hermes-runtime/
+vendor/bundled-runtimes/
 
 # Tar archives generated during Windows packaging
 build-tar/
