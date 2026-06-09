@@ -100,6 +100,9 @@ const getStore = (): SqliteStore | null => {
 
 export function getClaudeCodePath(): string {
   if (app.isPackaged) {
+    // Prefer the bundled claudecode binary if RuntimeResolver can find it.
+    const resolverPath = runtimeResolver?.tryGetPath('claudecode');
+    if (resolverPath) return resolverPath;
     return join(
       process.resourcesPath,
       'app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js'
@@ -116,6 +119,12 @@ export function getClaudeCodePath(): string {
     : appPath;
 
   return join(rootDir, 'node_modules/@anthropic-ai/claude-agent-sdk/cli.js');
+}
+
+import type { RuntimeResolver } from '../runtimeResolver';
+let runtimeResolver: RuntimeResolver | null = null;
+export function setRuntimeResolver(r: RuntimeResolver | null): void {
+  runtimeResolver = r;
 }
 
 type MatchedProvider = {

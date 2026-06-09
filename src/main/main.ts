@@ -71,6 +71,7 @@ import type { Platform } from './im/types';
 import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProviderHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
 import { RuntimeResolver } from './runtimeResolver';
 import { registerRuntimeHandlers } from './ipcHandlers/runtime';
+import { setRuntimeResolver } from './libs/claudeSettings';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -7451,6 +7452,7 @@ if (!gotTheLock) {
       console.info('[Main] RuntimeResolver: all 8 runtimes resolved from bundled resources');
     }
     registerRuntimeHandlers(runtimeResolver);
+    setRuntimeResolver(runtimeResolver);
 
     console.log('[Main] initApp: creating window');
     createWindow();
