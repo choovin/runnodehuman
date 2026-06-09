@@ -73,6 +73,7 @@ import { RuntimeResolver } from './runtimeResolver';
 import { registerRuntimeHandlers } from './ipcHandlers/runtime';
 import { setRuntimeResolver } from './libs/claudeSettings';
 import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
+import { setCoworkUtilRuntimeResolver } from './libs/coworkUtil';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -7455,6 +7456,7 @@ if (!gotTheLock) {
     registerRuntimeHandlers(runtimeResolver);
     setRuntimeResolver(runtimeResolver);
     setExternalCliRuntimeResolver(runtimeResolver);
+    setCoworkUtilRuntimeResolver(runtimeResolver);
 
     console.log('[Main] initApp: creating window');
     createWindow();
