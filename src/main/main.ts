@@ -69,13 +69,7 @@ import {
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
 import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProviderHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
-import { RuntimeResolver } from './runtimeResolver';
 import { registerRuntimeHandlers } from './ipcHandlers/runtime';
-import { setRuntimeResolver } from './libs/claudeSettings';
-import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
-import { setCoworkUtilRuntimeResolver } from './libs/coworkUtil';
-import { setRuntimeResolver as setInstallerRuntimeResolver } from './libs/externalAgentCliInstaller';
-import { stripQuarantineIfNeeded } from './runtimeHealth';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -92,8 +86,10 @@ import {
   HermesRuntimeAdapter,
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
+import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
 import { formatApiFetchLogPayload } from './libs/apiFetchLogSanitizer';
 import { cancelActiveDownload,downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
+import { setRuntimeResolver } from './libs/claudeSettings';
 import { getCurrentApiConfig, resolveCurrentApiConfig, setStoreGetter } from './libs/claudeSettings';
 import { CodexAppManager } from './libs/codexAppManager';
 import { CodexAppServerClient } from './libs/codexAppServerClient';
@@ -109,10 +105,12 @@ import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher,startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
 import { CoworkRunner } from './libs/coworkRunner';
 import { ensureCoworkStudioAssets } from './libs/coworkStudioAssets';
+import { setCoworkUtilRuntimeResolver } from './libs/coworkUtil';
 import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
 import { DeepSeekTuiRuntimeManager } from './libs/deepSeekTuiRuntimeManager';
 import { getServerApiBaseUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig,resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
+import { setRuntimeResolver as setInstallerRuntimeResolver } from './libs/externalAgentCliInstaller';
 import {
   ExternalAgentCliInstaller,
   type ExternalAgentCliInstallProgress,
@@ -196,6 +194,8 @@ import {
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
 import { McpStore } from './mcpStore';
 import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
+import { stripQuarantineIfNeeded } from './runtimeHealth';
+import { RuntimeResolver } from './runtimeResolver';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
 import { SkillManager } from './skillManager';

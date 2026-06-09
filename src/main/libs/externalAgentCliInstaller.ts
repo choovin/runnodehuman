@@ -2,9 +2,9 @@ import { spawn, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import os from 'os';
 
-import type { CliAppType, ExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
 import { RuntimeName } from '../../shared/runtime/constants';
 import type { RuntimeResolver } from '../runtimeResolver';
+import type { CliAppType, ExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
 
 let runtimeResolver: RuntimeResolver | null = null;
 export function setRuntimeResolver(r: RuntimeResolver | null): void {

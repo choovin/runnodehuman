@@ -3,8 +3,8 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
-import { type ApiConfigOverride,buildEnvForConfig, getCurrentApiConfig, resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
 import type { RuntimeResolver } from '../runtimeResolver';
+import { type ApiConfigOverride,buildEnvForConfig, getCurrentApiConfig, resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
 let coworkUtilRuntimeResolver: RuntimeResolver | null = null;
 export function setCoworkUtilRuntimeResolver(r: RuntimeResolver | null): void {
   coworkUtilRuntimeResolver = r;

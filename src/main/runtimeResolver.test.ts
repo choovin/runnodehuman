@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import type { RuntimeManifest } from '../shared/runtime/manifest';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+
 import { RuntimeName } from '../shared/runtime/constants';
+import type { RuntimeManifest } from '../shared/runtime/manifest';
 
 let tmpRoot: string;
 

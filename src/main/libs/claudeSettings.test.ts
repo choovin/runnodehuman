@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
 import path from 'path';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ProviderName } from '../../shared/providers';
-import { getClaudeCodePath, resolveCurrentApiConfig, setRuntimeResolver, setStoreGetter } from './claudeSettings';
 import { RuntimeResolver } from '../runtimeResolver';
+import { getClaudeCodePath, resolveCurrentApiConfig, setRuntimeResolver, setStoreGetter } from './claudeSettings';
 import * as coworkOpenAICompatProxy from './coworkOpenAICompatProxy';
 
 vi.mock('electron', () => ({

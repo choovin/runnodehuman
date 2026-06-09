@@ -1,7 +1,8 @@
-import path from 'path';
 import fs from 'fs';
-import type { RuntimeManifest } from '../shared/runtime/manifest';
+import path from 'path';
+
 import { RuntimeName } from '../shared/runtime/constants';
+import type { RuntimeManifest } from '../shared/runtime/manifest';
 
 const RUNTIME_BINARY: Record<RuntimeName, string> = {
   node: 'bin/node',
