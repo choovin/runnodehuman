@@ -67,15 +67,19 @@ async function downloadTo(url, destAbs) {
   await pipeline(Readable.fromWeb(res.body), file);
 }
 
-async function downloadAndVerify({ name, version, url, destRel, expectedSha256 }) {
+async function downloadAndVerify({ name, version, url, destRel, expectedSha256, skipVerify = false }) {
   const destAbs = path.join(PROJECT_ROOT, 'vendor', 'bundled-runtimes', name, version, destRel);
   await downloadTo(url, destAbs);
+  if (skipVerify || expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    console.warn(`[downloadAndVerify] ${name}: sha256 placeholder detected, skipping verify; will write back actual hash`);
+    return { destAbs, actualSha256: sha256OfFile(destAbs) };
+  }
   const actual = sha256OfFile(destAbs);
   if (actual !== expectedSha256) {
     fs.rmSync(destAbs, { force: true });
     throw new Error(`${name}: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
-  return destAbs;
+  return { destAbs, actualSha256: actual };
 }
 
 function writeManifestSlice(name, version, slice, files) {
@@ -85,6 +89,26 @@ function writeManifestSlice(name, version, slice, files) {
     path.join(sliceRoot, 'slice.json'),
     JSON.stringify({ name, version, slice, files }, null, 2)
   );
+}
+
+// Write a real sha256 back into package.json:runtimeManifest.<name>.sha256.
+// Used the first time setup-bundled-runtimes runs against a placeholder
+// manifest. Re-reading the package.json (instead of mutating in memory)
+// keeps the file in sync with the on-disk source of truth.
+function writeBackRuntimeSha256(name, slice, actualSha256) {
+  const pkgPath = path.join(PROJECT_ROOT, 'package.json');
+  const raw = fs.readFileSync(pkgPath, 'utf-8');
+  const pkg = JSON.parse(raw);
+  if (!pkg.runtimeManifest || !pkg.runtimeManifest[name]) {
+    console.warn(`[writeBackRuntimeSha256] ${name}: not in manifest, skipping writeback`);
+    return;
+  }
+  if (pkg.runtimeManifest[name].sha256 === actualSha256) {
+    return; // no-op
+  }
+  pkg.runtimeManifest[name].sha256 = actualSha256;
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  console.log(`[writeBackRuntimeSha256] ${name} (${slice}): wrote sha256 ${actualSha256.slice(0, 12)}...`);
 }
 
 // Per-runtime fetch functions. Each one downloads the official artifact
@@ -117,13 +141,16 @@ async function fetchNode(version, slice, expectedSha256) {
   if (!url) throw new Error(`unsupported node slice: ${slice}`);
   const ext = archiveExt.split('.').pop();
   const destRel = `node-v${version}-${platform}-${arch}.${ext}`;
-  const destAbs = await downloadAndVerify({
+  const { destAbs, actualSha256 } = await downloadAndVerify({
     name: 'node',
     version,
     url,
     destRel,
     expectedSha256,
   });
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('node', slice, actualSha256);
+  }
   const extractRoot = path.join(vendorDir('node', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   await tar.x({
@@ -147,7 +174,10 @@ async function fetchPython(version, slice, expectedSha256) {
   if (slice.startsWith('win32')) {
     const url = `https://www.python.org/ftp/python/${version}/python-${version}-embed-amd64.zip`;
     const destRel = `python-${version}-embed-amd64.zip`;
-    const destAbs = await downloadAndVerify({ name: 'python', version, url, destRel, expectedSha256 });
+    const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'python', version, url, destRel, expectedSha256 });
+    if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+      writeBackRuntimeSha256('python', slice, actualSha256);
+    }
     const extractRoot = path.join(vendorDir('python', version), slice);
     fs.mkdirSync(extractRoot, { recursive: true });
     // Python embeddable zip has no top-level directory; extract in place.
@@ -170,7 +200,10 @@ async function fetchGit(version, slice, expectedSha256) {
   if (slice.startsWith('win32')) {
     const url = `https://github.com/git-for-windows/git/releases/download/v${version}.windows.1/MinGit-${version}-64-bit.zip`;
     const destRel = `MinGit-${version}-64-bit.zip`;
-    const destAbs = await downloadAndVerify({ name: 'git', version, url, destRel, expectedSha256 });
+    const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'git', version, url, destRel, expectedSha256 });
+    if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+      writeBackRuntimeSha256('git', slice, actualSha256);
+    }
     const extractRoot = path.join(vendorDir('git', version), slice);
     fs.mkdirSync(extractRoot, { recursive: true });
     const { execFileSync } = require('child_process');
@@ -193,7 +226,10 @@ async function fetchGh(version, slice, expectedSha256) {
   const ext = platform === 'win32' ? 'zip' : 'tar.gz';
   const url = `https://github.com/cli/cli/releases/download/v${version}/gh_${version}_${platformSlug}_${archSlug}.${ext}`;
   const destRel = `gh_${version}_${platformSlug}_${archSlug}.${ext}`;
-  const destAbs = await downloadAndVerify({ name: 'gh', version, url, destRel, expectedSha256 });
+  const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'gh', version, url, destRel, expectedSha256 });
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('gh', slice, actualSha256);
+  }
   const extractRoot = path.join(vendorDir('gh', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   if (ext === 'tar.gz') {
@@ -220,9 +256,12 @@ async function fetchClaudeCode(version, slice, expectedSha256) {
   const extractRoot = path.join(vendorDir('claudecode', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   await tar.x({ file: packedTar, cwd: extractRoot, strip: 1 });
-  // Verify SHA-256 of the tarball for the manifest record.
+  // Verify SHA-256 of the tarball for the manifest record. If the manifest
+  // is a placeholder, skip verification but still write back the actual hash.
   const actual = sha256OfFile(packedTar);
-  if (actual !== expectedSha256) {
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('claudecode', slice, actual);
+  } else if (actual !== expectedSha256) {
     throw new Error(`claudecode: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
   fs.rmSync(packedTar, { recursive: true, force: true });
@@ -242,7 +281,9 @@ async function fetchCodex(version, slice, expectedSha256) {
   fs.mkdirSync(extractRoot, { recursive: true });
   await tar.x({ file: packedTar, cwd: extractRoot, strip: 1 });
   const actual = sha256OfFile(packedTar);
-  if (actual !== expectedSha256) {
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('codex', slice, actual);
+  } else if (actual !== expectedSha256) {
     throw new Error(`codex: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
   fs.rmSync(packedTar, { recursive: true, force: true });
@@ -258,7 +299,10 @@ async function fetchHermes(version, slice, expectedSha256) {
   const ext = platform === 'win32' ? 'zip' : 'tar.gz';
   const url = `https://github.com/NousResearch/hermes-agent/releases/download/${version}/hermes-agent-${platformSlug}-${archSlug}.${ext}`;
   const destRel = `hermes-agent-${platformSlug}-${archSlug}.${ext}`;
-  const destAbs = await downloadAndVerify({ name: 'hermes', version, url, destRel, expectedSha256 });
+  const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'hermes', version, url, destRel, expectedSha256 });
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('hermes', slice, actualSha256);
+  }
   const extractRoot = path.join(vendorDir('hermes', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   if (ext === 'tar.gz') {
@@ -283,9 +327,30 @@ async function fetchOpenClaw(version, slice, expectedSha256) {
 }
 
 async function main() {
+  // Parse --target/--all/--help first so the user can ask for help without
+  // a valid manifest. The manifest is read once we know we're actually
+  // going to fetch.
+  const argv = process.argv.slice(2);
+  let slice;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--target' && i + 1 < argv.length) {
+      slice = argv[i + 1];
+      i++;
+    } else if (argv[i] === '--all') {
+      slice = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'].join(',');
+    } else if (argv[i] === '--help' || argv[i] === '-h') {
+      console.log('Usage: setup-bundled-runtimes.cjs [--target <platform-arch>] [--all]');
+      console.log('  default: current platform+arch (e.g. darwin-arm64)');
+      console.log('  --target: explicit slice, e.g. linux-x64');
+      console.log('  --all:    fetch all 4 supported slices');
+      process.exit(0);
+    }
+  }
+
   const RUNTIME_MANIFEST = readRuntimeManifest();
   parseManifest(RUNTIME_MANIFEST);
-  const slice = (() => {
+
+  if (!slice) {
     const platform =
       process.platform === 'darwin'
         ? 'darwin'
@@ -293,9 +358,11 @@ async function main() {
           ? 'win32'
           : 'linux';
     const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'ia32' ? 'ia32' : 'x64';
-    return `${platform}-${arch}`;
-  })();
-  console.log(`[setup-bundled-runtimes] target slice: ${slice}`);
+    slice = `${platform}-${arch}`;
+  }
+
+  const slices = slice.includes(',') ? slice.split(',') : [slice];
+  console.log(`[setup-bundled-runtimes] target slice(s): ${slices.join(', ')}`);
 
   const fetchers = {
     node: fetchNode,
@@ -307,10 +374,17 @@ async function main() {
     hermes: fetchHermes,
     openclaw: fetchOpenClaw,
   };
-  for (const [name, fetcher] of Object.entries(fetchers)) {
-    const spec = RUNTIME_MANIFEST[name];
-    console.log(`[setup-bundled-runtimes] fetching ${name}@${spec.version} for ${slice}...`);
-    await fetcher(spec.version, slice, spec.sha256);
+  for (const s of slices) {
+    for (const [name, fetcher] of Object.entries(fetchers)) {
+      const spec = RUNTIME_MANIFEST[name];
+      console.log(`[setup-bundled-runtimes] fetching ${name}@${spec.version} for ${s}...`);
+      try {
+        await fetcher(spec.version, s, spec.sha256);
+      } catch (err) {
+        console.error(`[setup-bundled-runtimes] ${name}@${s} FAILED: ${err.message}`);
+        throw err;
+      }
+    }
   }
   console.log('[setup-bundled-runtimes] done');
 }
