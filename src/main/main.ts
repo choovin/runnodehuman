@@ -69,6 +69,8 @@ import {
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
 import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProviderHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
+import { RuntimeResolver } from './runtimeResolver';
+import { registerRuntimeHandlers } from './ipcHandlers/runtime';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -7436,6 +7438,19 @@ if (!gotTheLock) {
     );
     void platformProviderService.init();
     registerCloudPlatformProviderHandlers(platformProviderService, cloudBroadcaster);
+
+    // Bundled runtime resolver (8 runtimes shipped inside the installer).
+    const runtimeResolver = new RuntimeResolver(process.resourcesPath);
+    const runtimeHealth = runtimeResolver.tryGetAll();
+    const missingRuntimes = Array.from(runtimeHealth.entries())
+      .filter(([, v]) => v === null)
+      .map(([k]) => k);
+    if (missingRuntimes.length > 0) {
+      console.warn('[Main] RuntimeResolver: missing runtimes:', missingRuntimes.join(', '));
+    } else {
+      console.info('[Main] RuntimeResolver: all 8 runtimes resolved from bundled resources');
+    }
+    registerRuntimeHandlers(runtimeResolver);
 
     console.log('[Main] initApp: creating window');
     createWindow();
