@@ -350,22 +350,78 @@ async function fetchHermes(version, slice, expectedSha256) {
 }
 
 async function fetchOpenClaw(version, slice, expectedSha256) {
-  // OpenClaw has a non-trivial build chain. The existing
-  // `openclaw:runtime:<target>` npm scripts invoke scripts/build-openclaw-runtime.sh
-  // which writes the output to vendor/bundled-runtimes/openclaw/<version>/<target>/
-  // (post-Task-16 migration). We shell out to that flow.
+  // Adopt the RClaw install pattern: source from the official `openclaw` npm
+  // package (which is a pre-built, self-contained distribution), install
+  // production-only dependencies, and lay out under the same
+  // `vendor/bundled-runtimes/openclaw/<version>/<slice>/` namespace the
+  // git-clone path used to fill. This keeps the resolver and downstream
+  // consumers agnostic to which source we used.
   //
-  // The npm scripts use the `mac-*` prefix for darwin (e.g. mac-arm64, mac-x64),
-  // not `darwin-*`. Translate the slice name before calling npm run.
+  // The legacy git-clone + build chain is preserved as the
+  // `openclaw:runtime:<target>` npm scripts (used for dev-mode and for
+  // applying the WeSight-specific patches under scripts/patches/<version>/).
+  const tar = require('tar');
   const { execFileSync } = require('child_process');
-  let script;
-  if (slice.startsWith('darwin-')) {
-    script = `openclaw:runtime:mac-${slice.slice('darwin-'.length)}`;
-  } else {
-    script = `openclaw:runtime:${slice}`;
+  const sliceRoot = path.join(vendorDir('openclaw', version), slice);
+  const tmpDir = path.join(vendorDir('openclaw', version), '.npm-tmp');
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  // 1. npm pack
+  console.log(`[fetchOpenClaw] npm pack openclaw@${version} -> ${tmpDir}`);
+  execFileSync('npm', ['pack', `openclaw@${version}`, '--pack-destination', tmpDir], {
+    stdio: 'inherit',
+  });
+  const packedTar = fs.readdirSync(tmpDir).map((f) => path.join(tmpDir, f)).find((p) => p.endsWith('.tgz'));
+  if (!packedTar) throw new Error('[fetchOpenClaw] npm pack produced no .tgz');
+
+  // 2. Compute sha256 of the tarball for the manifest record
+  const actual = sha256OfFile(packedTar);
+  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
+    writeBackRuntimeSha256('openclaw', slice, actual);
+  } else if (actual !== expectedSha256) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(`openclaw: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
-  console.log(`[fetchOpenClaw] delegating to npm run ${script}`);
-  execFileSync('npm', ['run', script], { stdio: 'inherit' });
+
+  // 3. Extract into the slice root
+  fs.rmSync(sliceRoot, { recursive: true, force: true });
+  fs.mkdirSync(sliceRoot, { recursive: true });
+  await tar.x({ file: packedTar, cwd: sliceRoot, strip: 1 });
+
+  // 4. Install production-only dependencies (matches RClaw's pattern of
+  //    using a pre-built distribution; RClaw uses pnpm but npm install here
+  //    is functionally equivalent and avoids the pnpm symlink-store
+  //    complications).
+  console.log(`[fetchOpenClaw] installing production deps in ${sliceRoot}`);
+  execFileSync('npm', ['install', '--omit=dev', '--omit=optional', '--no-audit', '--no-fund'], {
+    cwd: sliceRoot,
+    stdio: 'inherit',
+  });
+
+  // 5. Create the `current` symlink that the resolver and downstream
+  //    code (openclawConfigSync, sync-openclaw-runtime-current, etc.)
+  //    expect at vendor/bundled-runtimes/openclaw/<version>/current
+  const linkParent = path.dirname(sliceRoot);
+  const currentLink = path.join(linkParent, 'current');
+  if (fs.existsSync(currentLink) || fs.lstatSync(currentLink, { throwIfNoEntry: false })) {
+    fs.rmSync(currentLink, { recursive: true, force: true });
+  }
+  fs.symlinkSync(slice, currentLink, 'dir');
+
+  // 6. Pre-create the `extensions/` directory. The WeSight plugin chain
+  //    (ensure-openclaw-plugins.cjs, sync-local-openclaw-extensions.cjs)
+  //    populates this directory. The upstream `openclaw` npm package
+  //    no longer ships an `extensions/` directory by default; creating
+  //    it here keeps the chain functional. (Whether upstream openclaw
+  //    2026.6.1 actually discovers plugins under `extensions/` is a
+  //    separate question — see scripts/notes/openclaw-2026.6.1-plugin-shape.md
+  //    when added.)
+  fs.mkdirSync(path.join(sliceRoot, 'extensions'), { recursive: true });
+
+  // 7. Cleanup
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  console.log(`[fetchOpenClaw] done; symlinked ${currentLink} -> ${slice}`);
 }
 
 async function main() {
@@ -436,6 +492,14 @@ async function main() {
         process.exit(1);
       }
       const spec = RUNTIME_MANIFEST[name];
+      // Skip fetch if the slice is already on disk. Saves time on repeated
+      // builds and avoids re-fetching over flaky networks. Force a re-fetch
+      // by deleting vendor/bundled-runtimes/<name>/<version>/<slice>.
+      const slicePath = path.join(vendorDir(name, spec.version), s);
+      if (fs.existsSync(slicePath) && fs.readdirSync(slicePath).length > 0) {
+        console.log(`[setup-bundled-runtimes] ${name}@${spec.version} for ${s} already present, skipping`);
+        continue;
+      }
       console.log(`[setup-bundled-runtimes] fetching ${name}@${spec.version} for ${s}...`);
       try {
         await fetcher(spec.version, s, spec.sha256);

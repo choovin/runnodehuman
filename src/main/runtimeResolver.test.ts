@@ -37,7 +37,7 @@ const TEST_MANIFEST: RuntimeManifest = {
 
 describe('RuntimeResolver', () => {
   test('tryGetPath returns the absolute path for a present binary', async () => {
-    const binPath = writeBinary('wesight-runtime/node/22.11.0/darwin-arm64/bin/node');
+    const binPath = writeBinary('wesight-runtime/node/22.11.0/mac-arm64/bin/node');
     const { RuntimeResolver } = await import('./runtimeResolver');
     const resolver = new RuntimeResolver(tmpRoot, TEST_MANIFEST);
     expect(resolver.tryGetPath('node')).toBe(binPath);
@@ -69,25 +69,25 @@ describe('RuntimeResolver', () => {
   });
 
   test('tryGetAll populates a non-null entry with path + version when the binary is present', async () => {
-    writeBinary('wesight-runtime/node/22.11.0/darwin-arm64/bin/node');
+    writeBinary('wesight-runtime/node/22.11.0/mac-arm64/bin/node');
     const { RuntimeResolver } = await import('./runtimeResolver');
     const resolver = new RuntimeResolver(tmpRoot, TEST_MANIFEST);
     const all = resolver.tryGetAll();
     const node = all.get('node');
     expect(node).not.toBeNull();
-    expect(node!.path).toContain('node/22.11.0/darwin-arm64/bin/node');
+    expect(node!.path).toContain('node/22.11.0/mac-arm64/bin/node');
     expect(node!.version).toBe('22.11.0');
     expect(node!.source).toBe('bundled');
   });
 
   test('buildPath("claudecode") includes the bundled node bin dir', async () => {
-    writeBinary('wesight-runtime/claudecode/1.0.0/darwin-arm64/bin/claude');
-    writeBinary('wesight-runtime/node/22.11.0/darwin-arm64/bin/node');
+    writeBinary('wesight-runtime/claudecode/1.0.0/mac-arm64/bin/claude');
+    writeBinary('wesight-runtime/node/22.11.0/mac-arm64/bin/node');
     const { RuntimeResolver } = await import('./runtimeResolver');
     const resolver = new RuntimeResolver(tmpRoot, TEST_MANIFEST);
     const pathFragment = resolver.buildPath('claudecode');
-    expect(pathFragment).toContain('node/22.11.0/darwin-arm64/bin');
-    expect(pathFragment).toContain('claudecode/1.0.0/darwin-arm64/bin');
+    expect(pathFragment).toContain('node/22.11.0/mac-arm64/bin');
+    expect(pathFragment).toContain('claudecode/1.0.0/mac-arm64/bin');
   });
 
   test('getHealth returns a map keyed by RuntimeName', async () => {

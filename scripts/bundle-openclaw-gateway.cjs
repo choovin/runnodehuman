@@ -50,6 +50,19 @@ if (!fs.existsSync(entryPath)) {
   process.exit(1);
 }
 
+// When the source is a pre-built distribution (npm `openclaw` package, no
+// `src/` directory), the `dist/` files are already esbuild-bundled by
+// upstream. Re-bundling would double the work and bloat the package; skip
+// the esbuild step entirely and just copy the chosen entry into place.
+const hasSourceTree = fs.existsSync(path.join(runtimeDir, 'src'));
+if (!hasSourceTree) {
+  fs.mkdirSync(path.dirname(bundleOutPath), { recursive: true });
+  fs.copyFileSync(entryPath, bundleOutPath);
+  const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
+  console.log(`[bundle-openclaw-gateway] pre-built distribution detected; copied ${path.relative(runtimeDir, entryPath)} -> gateway-bundle.mjs (${sizeKB} KB)`);
+  process.exit(0);
+}
+
 // Skip if bundle is already up-to-date (newer than the entry point).
 if (fs.existsSync(bundleOutPath)) {
   const bundleStat = fs.statSync(bundleOutPath);

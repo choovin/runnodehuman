@@ -15,7 +15,7 @@
     "claudecode": { "version": "1.0.0", "sha256": "1a13e9deff835389d69a9356f7d8957f55eba8f3fc3d800e6e9d6c702b488998" },
     "codex": { "version": "0.138.0", "sha256": "aef3a3d77b038470120651b35c911053f0033ccbd1427eeff0d5fcf270b7009a" },
     "hermes": { "version": "1.0.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "openclaw": { "version": "v2026.3.2", "sha256": "REPLACE_AFTER_FIRST_FETCH" }
+    "openclaw": { "version": "2026.6.1", "sha256": "e43ec41fd810c147775baa42692a2eb110e5233abb67534901c727866369a4bb" }
   },
   "openclaw": {
     "version": "v2026.3.2",
