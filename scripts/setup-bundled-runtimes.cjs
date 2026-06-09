@@ -130,13 +130,15 @@ async function fetchNode(version, slice, expectedSha256) {
   const NODE_BASE = 'https://nodejs.org/dist';
   const [platform, arch] = slice.split('-');
   let url, archiveExt;
-  if (platform === 'darwin') {
+  if (platform === 'darwin' || platform === 'mac') {
+    // Upstream nodejs.org uses `darwin` in the URL but the slice namespace
+    // we use is `mac-*` (matching electron-builder's resolveOpenClawRuntimeTargetId).
     url = `${NODE_BASE}/v${version}/node-v${version}-darwin-${arch}.tar.xz`;
     archiveExt = 'tar.xz';
   } else if (platform === 'linux') {
     url = `${NODE_BASE}/v${version}/node-v${version}-linux-${arch}.tar.xz`;
     archiveExt = 'tar.xz';
-  } else if (platform === 'win32') {
+  } else if (platform === 'win' || platform === 'win32') {
     url = `${NODE_BASE}/v${version}/node-v${version}-win-x64.7z`;
     archiveExt = '7z';
   }
@@ -190,7 +192,7 @@ async function fetchPython(version, slice, expectedSha256) {
   // using the Win32 embeddable zip for Windows and deferring the macOS/Linux
   // build to a follow-up; until then, macOS and Linux fall through to the
   // existing setup:python-runtime / system python fallback.
-  if (slice.startsWith('win32')) {
+  if (slice.startsWith('win') || slice.startsWith('win32')) {
     const url = `https://www.python.org/ftp/python/${version}/python-${version}-embed-amd64.zip`;
     const destRel = `python-${version}-embed-amd64.zip`;
     const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'python', version, url, destRel, expectedSha256 });
@@ -216,7 +218,7 @@ async function fetchGit(version, slice, expectedSha256) {
   //
   // Until the macOS .pkg extraction is wired, macOS falls through to
   // system git (Xcode Command Line Tools' git). Linux likewise.
-  if (slice.startsWith('win32')) {
+  if (slice.startsWith('win') || slice.startsWith('win32')) {
     const url = `https://github.com/git-for-windows/git/releases/download/v${version}.windows.1/MinGit-${version}-64-bit.zip`;
     const destRel = `MinGit-${version}-64-bit.zip`;
     const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'git', version, url, destRel, expectedSha256 });
@@ -242,7 +244,8 @@ async function fetchGh(version, slice, expectedSha256) {
   const tar = require('tar');
   const [platform, arch] = slice.split('-');
   const platformSlug =
-    platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'windows' : 'linux';
+    platform === 'darwin' || platform === 'mac' ? 'macOS'
+      : platform === 'win' || platform === 'win32' ? 'windows' : 'linux';
   const archSlug = arch === 'arm64' ? 'arm64' : arch === 'ia32' ? '386' : 'amd64';
   const ext = 'zip';
   const url = `https://github.com/cli/cli/releases/download/v${version}/gh_${version}_${platformSlug}_${archSlug}.${ext}`;
@@ -351,9 +354,16 @@ async function fetchOpenClaw(version, slice, expectedSha256) {
   // `openclaw:runtime:<target>` npm scripts invoke scripts/build-openclaw-runtime.sh
   // which writes the output to vendor/bundled-runtimes/openclaw/<version>/<target>/
   // (post-Task-16 migration). We shell out to that flow.
+  //
+  // The npm scripts use the `mac-*` prefix for darwin (e.g. mac-arm64, mac-x64),
+  // not `darwin-*`. Translate the slice name before calling npm run.
   const { execFileSync } = require('child_process');
-  const target = slice; // 'darwin-arm64' | 'win-x64' | 'linux-x64' | ...
-  const script = `openclaw:runtime:${target}`;
+  let script;
+  if (slice.startsWith('darwin-')) {
+    script = `openclaw:runtime:mac-${slice.slice('darwin-'.length)}`;
+  } else {
+    script = `openclaw:runtime:${slice}`;
+  }
   console.log(`[fetchOpenClaw] delegating to npm run ${script}`);
   execFileSync('npm', ['run', script], { stdio: 'inherit' });
 }
@@ -388,13 +398,19 @@ async function main() {
   parseManifest(RUNTIME_MANIFEST);
 
   if (!slice) {
+    // Match the slice naming used by electron-builder's
+    // resolveOpenClawRuntimeTargetId (mac-arm64, mac-x64, win-arm64,
+    // win-x64, linux-arm64, linux-x64). This is the same shape the
+    // runtime resolver (src/main/runtimeResolver.ts) expects, so the
+    // vendored directory lines up with what `verifyBundledRuntimes`
+    // looks for in beforePack.
     const platform =
       process.platform === 'darwin'
-        ? 'darwin'
+        ? 'mac'
         : process.platform === 'win32'
-          ? 'win32'
+          ? 'win'
           : 'linux';
-    const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'ia32' ? 'ia32' : 'x64';
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
     slice = `${platform}-${arch}`;
   }
 
