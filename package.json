@@ -8,13 +8,13 @@
   "license": "MIT",
   "version": "2026.6.2",
   "runtimeManifest": {
-    "node": { "version": "22.11.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
+    "node": { "version": "22.11.0", "sha256": "c379a90c6aa605b74042a233ddcda4247b347ba5732007d280e44422cc8f9ecb" },
     "python": { "version": "3.12.7", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
     "git": { "version": "2.47.1", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "gh": { "version": "2.65.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "claudecode": { "version": "1.0.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "codex": { "version": "0.1.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "hermes": { "version": "2026.4.1", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
+    "gh": { "version": "2.65.0", "sha256": "5acb7110fa6f18d2e1a7bea41526bb8532584f4a10067b40217488bf9f3ad9ab" },
+    "claudecode": { "version": "1.0.0", "sha256": "1a13e9deff835389d69a9356f7d8957f55eba8f3fc3d800e6e9d6c702b488998" },
+    "codex": { "version": "0.138.0", "sha256": "aef3a3d77b038470120651b35c911053f0033ccbd1427eeff0d5fcf270b7009a" },
+    "hermes": { "version": "1.0.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
     "openclaw": { "version": "v2026.3.2", "sha256": "REPLACE_AFTER_FIRST_FETCH" }
   },
   "openclaw": {

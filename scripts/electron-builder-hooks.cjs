@@ -665,6 +665,11 @@ function verifyBundledRuntimes(context) {
   const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
   const targetId = resolveOpenClawRuntimeTargetId(context);
   if (!targetId) return; // no target slice (e.g. platform pre-build)
+  // Runtimes that are "best effort" — they have no portable upstream for
+  // the current platform and are expected to be missing from the vendor
+  // tree. The resolver falls back to the system PATH for these.
+  const bestEffort = new Set(['python', 'git', 'hermes']);
+  let missing = [];
   for (const name of ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw']) {
     const spec = pkg.runtimeManifest?.[name];
     if (!spec) {
@@ -674,13 +679,23 @@ function verifyBundledRuntimes(context) {
       __dirname, '..', 'vendor', 'bundled-runtimes', name, spec.version, targetId
     );
     if (!existsSync(slicePath)) {
-      throw new Error(
-        `[electron-builder-hooks] Runtime ${name}@${spec.version} missing for target ${targetId}. `
-        + `Run \`npm run setup-bundled-runtimes\` first. Expected: ${slicePath}`
-      );
+      if (bestEffort.has(name)) {
+        console.warn(
+          `[electron-builder-hooks] Runtime ${name}@${spec.version} not bundled for target ${targetId}; `
+          + `resolver will fall back to system PATH.`
+        );
+        continue;
+      }
+      missing.push(`${name}@${spec.version} (expected at ${slicePath})`);
     }
   }
-  console.log(`[electron-builder-hooks] Verified all 8 bundled runtimes for target ${targetId}.`);
+  if (missing.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] Bundled runtimes missing for target ${targetId}: ${missing.join(', ')}. `
+      + `Run \`npm run setup-bundled-runtimes\` first.`
+    );
+  }
+  console.log(`[electron-builder-hooks] Verified bundled runtimes for target ${targetId} (best-effort runtimes may be absent).`);
 }
 
 module.exports = {

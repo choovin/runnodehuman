@@ -6,9 +6,22 @@ const path = require('path');
 function syncLocalOpenClawExtensions(runtimeRoot) {
   const rootDir = path.resolve(__dirname, '..');
   const sourceDir = path.join(rootDir, 'openclaw-extensions');
-  const targetRoot = runtimeRoot
-    ? path.resolve(runtimeRoot)
-    : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+  let targetRoot;
+  if (runtimeRoot) {
+    targetRoot = path.resolve(runtimeRoot);
+  } else if (process.env.OPENCLAW_RUNTIME_DIR) {
+    targetRoot = path.resolve(process.env.OPENCLAW_RUNTIME_DIR);
+  } else {
+    // Bundled-runtimes namespace (post-Task-16) or legacy fallback.
+    let bundledDefault = null;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+      const v = pkg.runtimeManifest?.openclaw?.version;
+      if (v) bundledDefault = path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', v, 'current');
+    } catch {}
+    const legacyDefault = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+    targetRoot = bundledDefault && fs.existsSync(bundledDefault) ? bundledDefault : legacyDefault;
+  }
   const targetExtensionsDir = path.join(targetRoot, 'extensions');
 
   if (!fs.existsSync(sourceDir)) {

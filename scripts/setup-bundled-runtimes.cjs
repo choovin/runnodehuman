@@ -38,8 +38,8 @@ function parseManifest(manifest) {
     if (typeof spec.version !== 'string' || spec.version.length === 0) {
       throw new Error(`runtimeManifest: missing ${name}.version`);
     }
-    if (typeof spec.sha256 !== 'string' || !SHA256_RE.test(spec.sha256)) {
-      throw new Error(`runtimeManifest: ${name}.sha256 must be 64 hex chars`);
+    if (typeof spec.sha256 !== 'string' || !(SHA256_RE.test(spec.sha256) || spec.sha256 === 'REPLACE_AFTER_FIRST_FETCH')) {
+      throw new Error(`runtimeManifest: ${name}.sha256 must be 64 hex chars or "REPLACE_AFTER_FIRST_FETCH"`);
     }
   }
   return manifest;
@@ -93,21 +93,24 @@ function writeManifestSlice(name, version, slice, files) {
 
 // Write a real sha256 back into package.json:runtimeManifest.<name>.sha256.
 // Used the first time setup-bundled-runtimes runs against a placeholder
-// manifest. Re-reading the package.json (instead of mutating in memory)
-// keeps the file in sync with the on-disk source of truth.
+// manifest. We use targeted string replacement (not full-file JSON
+// re-serialization) to avoid touching unrelated fields and minimize the
+// resulting diff.
 function writeBackRuntimeSha256(name, slice, actualSha256) {
   const pkgPath = path.join(PROJECT_ROOT, 'package.json');
   const raw = fs.readFileSync(pkgPath, 'utf-8');
-  const pkg = JSON.parse(raw);
-  if (!pkg.runtimeManifest || !pkg.runtimeManifest[name]) {
-    console.warn(`[writeBackRuntimeSha256] ${name}: not in manifest, skipping writeback`);
+  // Match the line for this runtime in the runtimeManifest block, replacing
+  // only the sha256 field. Tolerates surrounding whitespace; relies on
+  // JSON.stringify-without-space formatting (matches the project's style).
+  const pattern = new RegExp(
+    `("${name}"\\s*:\\s*\\{\\s*"version"\\s*:\\s*"[^"]*"\\s*,\\s*"sha256"\\s*:\\s*)"[^"]*"`
+  );
+  if (!pattern.test(raw)) {
+    console.warn(`[writeBackRuntimeSha256] ${name}: pattern not found in package.json, skipping`);
     return;
   }
-  if (pkg.runtimeManifest[name].sha256 === actualSha256) {
-    return; // no-op
-  }
-  pkg.runtimeManifest[name].sha256 = actualSha256;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  const updated = raw.replace(pattern, `$1"${actualSha256}"`);
+  fs.writeFileSync(pkgPath, updated);
   console.log(`[writeBackRuntimeSha256] ${name} (${slice}): wrote sha256 ${actualSha256.slice(0, 12)}...`);
 }
 
@@ -125,7 +128,6 @@ function writeBackRuntimeSha256(name, slice, actualSha256) {
 
 async function fetchNode(version, slice, expectedSha256) {
   const NODE_BASE = 'https://nodejs.org/dist';
-  const tar = require('tar');
   const [platform, arch] = slice.split('-');
   let url, archiveExt;
   if (platform === 'darwin') {
@@ -153,11 +155,28 @@ async function fetchNode(version, slice, expectedSha256) {
   }
   const extractRoot = path.join(vendorDir('node', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
-  await tar.x({
-    file: destAbs,
-    cwd: extractRoot,
-    strip: 1,
-  });
+  if (archiveExt === 'tar.xz') {
+    // The `tar` npm package does not support .xz natively on Node 24; we
+    // shell out to `xz -dc` and pipe into `tar x` (libarchive-free, fast).
+    // On macOS, `xz` ships with the OS via Command Line Tools or Homebrew.
+    const tar = require('tar');
+    const { spawn } = require('child_process');
+    await new Promise((resolve, reject) => {
+      const xz = spawn('xz', ['-dc']);
+      const t = tar.x({ cwd: extractRoot, strip: 1 });
+      xz.stdout.pipe(t);
+      xz.on('error', reject);
+      t.on('end', resolve);
+      t.on('error', reject);
+      const input = fs.createReadStream(destAbs);
+      input.on('error', reject);
+      input.pipe(xz.stdin);
+    });
+  } else {
+    // .7z extraction on Windows: defer to follow-up; tar package does not
+    // support .7z either. Real Win builds use 7zip.
+    throw new Error(`node: ${archiveExt} extraction not yet implemented`);
+  }
   fs.rmSync(destAbs);
 }
 async function fetchPython(version, slice, expectedSha256) {
@@ -215,15 +234,17 @@ async function fetchGit(version, slice, expectedSha256) {
 }
 
 async function fetchGh(version, slice, expectedSha256) {
-  // Upstream: https://github.com/cli/cli/releases/download/v<ver>/gh_<ver>_<os>_<arch>.tar.gz
+  // Upstream: https://github.com/cli/cli/releases/download/v<ver>/gh_<ver>_<os>_<arch>.zip
   //
-  // gh 2.65.0: gh_2.65.0_macOS_amd64.tar.gz / gh_2.65.0_linux_amd64.tar.gz / gh_2.65.0_windows_amd64.zip
+  // As of gh 2.65.0, all official assets are .zip (no more .tar.gz).
+  // Asset names: gh_2.65.0_macOS_arm64.zip, gh_2.65.0_linux_amd64.zip,
+  //              gh_2.65.0_windows_amd64.zip
   const tar = require('tar');
   const [platform, arch] = slice.split('-');
   const platformSlug =
     platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'windows' : 'linux';
   const archSlug = arch === 'arm64' ? 'arm64' : arch === 'ia32' ? '386' : 'amd64';
-  const ext = platform === 'win32' ? 'zip' : 'tar.gz';
+  const ext = 'zip';
   const url = `https://github.com/cli/cli/releases/download/v${version}/gh_${version}_${platformSlug}_${archSlug}.${ext}`;
   const destRel = `gh_${version}_${platformSlug}_${archSlug}.${ext}`;
   const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'gh', version, url, destRel, expectedSha256 });
@@ -232,11 +253,25 @@ async function fetchGh(version, slice, expectedSha256) {
   }
   const extractRoot = path.join(vendorDir('gh', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
-  if (ext === 'tar.gz') {
-    await tar.x({ file: destAbs, cwd: extractRoot, strip: 1 });
+  // The `tar` npm package does not support .zip; unzip to a temp dir, then
+  // move the top-level entry's contents up to the extract root.
+  const { execFileSync } = require('child_process');
+  const tmpRoot = path.join(vendorDir('gh', version), `${slice}.tmp`);
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.mkdirSync(tmpRoot, { recursive: true });
+  execFileSync('unzip', ['-q', destAbs, '-d', tmpRoot], { stdio: 'inherit' });
+  // The archive has a single top-level dir (e.g. gh_2.65.0_macOS_arm64/);
+  // move its children up to extractRoot using cp+rm because macOS `mv`
+  // requires the destination directory to exist.
+  const topLevel = fs.readdirSync(tmpRoot);
+  if (topLevel.length === 1) {
+    const inner = path.join(tmpRoot, topLevel[0]);
+    execFileSync('cp', ['-R', inner + '/', extractRoot + '/'], { stdio: 'inherit' });
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   } else {
-    const { execFileSync } = require('child_process');
-    execFileSync('unzip', ['-q', destAbs, '-d', extractRoot], { stdio: 'inherit' });
+    // Multiple top-level entries; just rename the tmp dir.
+    fs.rmSync(extractRoot, { recursive: true, force: true });
+    fs.renameSync(tmpRoot, extractRoot);
   }
   fs.rmSync(destAbs);
 }
@@ -245,14 +280,18 @@ async function fetchClaudeCode(version, slice, expectedSha256) {
   // Upstream: npm registry, package @anthropic-ai/claude-code
   //   npm pack @anthropic-ai/claude-code@<version> --pack-destination <tmp>
   //   tar -xf <packed>.tgz
+  // `npm pack` writes the tarball with the package's full name (including
+  // scope), so we glob to find it instead of hardcoding the filename.
   const tar = require('tar');
   const { execFileSync } = require('child_process');
   const tmpDir = path.join(PROJECT_ROOT, 'vendor', 'bundled-runtimes', 'claudecode', version, '.tmp');
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
-  const packedTar = path.join(tmpDir, `claudecode-${version}.tgz`);
   execFileSync('npm', ['pack', `@anthropic-ai/claude-code@${version}`, '--pack-destination', tmpDir], {
     stdio: 'inherit',
   });
+  const packedTar = fs.readdirSync(tmpDir).map((f) => path.join(tmpDir, f)).find((p) => p.endsWith('.tgz'));
+  if (!packedTar) throw new Error('claudecode: npm pack produced no .tgz');
   const extractRoot = path.join(vendorDir('claudecode', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   await tar.x({ file: packedTar, cwd: extractRoot, strip: 1 });
@@ -265,6 +304,7 @@ async function fetchClaudeCode(version, slice, expectedSha256) {
     throw new Error(`claudecode: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
   fs.rmSync(packedTar, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 async function fetchCodex(version, slice, expectedSha256) {
@@ -272,11 +312,13 @@ async function fetchCodex(version, slice, expectedSha256) {
   const tar = require('tar');
   const { execFileSync } = require('child_process');
   const tmpDir = path.join(PROJECT_ROOT, 'vendor', 'bundled-runtimes', 'codex', version, '.tmp');
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
-  const packedTar = path.join(tmpDir, `codex-${version}.tgz`);
   execFileSync('npm', ['pack', `@openai/codex@${version}`, '--pack-destination', tmpDir], {
     stdio: 'inherit',
   });
+  const packedTar = fs.readdirSync(tmpDir).map((f) => path.join(tmpDir, f)).find((p) => p.endsWith('.tgz'));
+  if (!packedTar) throw new Error('codex: npm pack produced no .tgz');
   const extractRoot = path.join(vendorDir('codex', version), slice);
   fs.mkdirSync(extractRoot, { recursive: true });
   await tar.x({ file: packedTar, cwd: extractRoot, strip: 1 });
@@ -287,31 +329,21 @@ async function fetchCodex(version, slice, expectedSha256) {
     throw new Error(`codex: sha256 mismatch (expected ${expectedSha256}, got ${actual})`);
   }
   fs.rmSync(packedTar, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 async function fetchHermes(version, slice, expectedSha256) {
-  // Upstream: https://github.com/NousResearch/hermes-agent/releases
-  //   hermes-agent-<platform>-<arch>.<ext>
-  const tar = require('tar');
-  const [platform, arch] = slice.split('-');
-  const platformSlug = platform === 'darwin' ? 'macos' : platform === 'win32' ? 'windows' : 'linux';
-  const archSlug = arch === 'arm64' ? 'arm64' : arch === 'ia32' ? 'i386' : 'x64';
-  const ext = platform === 'win32' ? 'zip' : 'tar.gz';
-  const url = `https://github.com/NousResearch/hermes-agent/releases/download/${version}/hermes-agent-${platformSlug}-${archSlug}.${ext}`;
-  const destRel = `hermes-agent-${platformSlug}-${archSlug}.${ext}`;
-  const { destAbs, actualSha256 } = await downloadAndVerify({ name: 'hermes', version, url, destRel, expectedSha256 });
-  if (expectedSha256 === 'REPLACE_AFTER_FIRST_FETCH') {
-    writeBackRuntimeSha256('hermes', slice, actualSha256);
-  }
-  const extractRoot = path.join(vendorDir('hermes', version), slice);
-  fs.mkdirSync(extractRoot, { recursive: true });
-  if (ext === 'tar.gz') {
-    await tar.x({ file: destAbs, cwd: extractRoot, strip: 1 });
-  } else {
-    const { execFileSync } = require('child_process');
-    execFileSync('unzip', ['-q', destAbs, '-d', extractRoot], { stdio: 'inherit' });
-  }
-  fs.rmSync(destAbs);
+  // Hermes Agent (https://github.com/NousResearch/hermes-agent) is a
+  // Python package distributed via PyPI, not a binary release on GitHub.
+  // Bundling it as a standalone runtime would require installing it into
+  // a vendor venv (pip install --target <dir>), which is a significantly
+  // different shape from the other 7 runtimes.
+  //
+  // For now, skip on all platforms and fall back to system python + pip
+  // install. The runtime resolver returns null for `hermes` in this
+  // configuration, and the relevant code paths use system hermes.
+  // TODO(B-future): implement venv-based bundling.
+  console.warn(`[fetchHermes] hermes-agent is a Python package; skipping runtime bundle (will use system hermes)`);
 }
 
 async function fetchOpenClaw(version, slice, expectedSha256) {
@@ -332,17 +364,22 @@ async function main() {
   // going to fetch.
   const argv = process.argv.slice(2);
   let slice;
+  let only;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--target' && i + 1 < argv.length) {
       slice = argv[i + 1];
       i++;
     } else if (argv[i] === '--all') {
       slice = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'].join(',');
+    } else if (argv[i] === '--only' && i + 1 < argv.length) {
+      only = argv[i + 1];
+      i++;
     } else if (argv[i] === '--help' || argv[i] === '-h') {
-      console.log('Usage: setup-bundled-runtimes.cjs [--target <platform-arch>] [--all]');
+      console.log('Usage: setup-bundled-runtimes.cjs [--target <platform-arch>] [--all] [--only <runtime>]');
       console.log('  default: current platform+arch (e.g. darwin-arm64)');
       console.log('  --target: explicit slice, e.g. linux-x64');
       console.log('  --all:    fetch all 4 supported slices');
+      console.log('  --only:   fetch only the named runtime (e.g. gh, hermes)');
       process.exit(0);
     }
   }
@@ -374,8 +411,14 @@ async function main() {
     hermes: fetchHermes,
     openclaw: fetchOpenClaw,
   };
+  const names = only ? [only] : Object.keys(fetchers);
   for (const s of slices) {
-    for (const [name, fetcher] of Object.entries(fetchers)) {
+    for (const name of names) {
+      const fetcher = fetchers[name];
+      if (!fetcher) {
+        console.error(`[setup-bundled-runtimes] unknown runtime: ${name}`);
+        process.exit(1);
+      }
       const spec = RUNTIME_MANIFEST[name];
       console.log(`[setup-bundled-runtimes] fetching ${name}@${spec.version} for ${s}...`);
       try {

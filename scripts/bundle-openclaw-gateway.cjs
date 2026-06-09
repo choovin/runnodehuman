@@ -17,9 +17,24 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
+// Resolve the openclaw runtime directory. Order:
+//   1. CLI arg (used by the openclaw:runtime:<target> chain)
+//   2. OPENCLAW_RUNTIME_DIR env var (also a chain escape hatch)
+//   3. Bundled-runtimes namespace (post-Task-16 default): <root>/vendor/bundled-runtimes/openclaw/<manifest-version>/current
+//   4. Legacy path: <root>/vendor/openclaw-runtime/current (pre-Task-16)
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+const manifestVersion = pkg.runtimeManifest?.openclaw?.version;
+const bundledDefault = manifestVersion
+  ? path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', manifestVersion, 'current')
+  : null;
+const legacyDefault = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 const runtimeDir = process.argv[2]
   ? path.resolve(process.argv[2])
-  : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+  : process.env.OPENCLAW_RUNTIME_DIR
+    ? path.resolve(process.env.OPENCLAW_RUNTIME_DIR)
+    : bundledDefault && fs.existsSync(bundledDefault)
+      ? bundledDefault
+      : legacyDefault;
 
 const bundleOutPath = path.join(runtimeDir, 'gateway-bundle.mjs');
 

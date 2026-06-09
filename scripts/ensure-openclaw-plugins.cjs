@@ -143,7 +143,22 @@ for (const plugin of plugins) {
 
 const forceInstall = process.env.OPENCLAW_FORCE_PLUGIN_INSTALL === '1';
 const pluginCacheBase = path.join(rootDir, 'vendor', 'openclaw-plugins');
-const runtimeExtensionsDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current', 'extensions');
+// Resolve the runtime extensions directory. Order: CLI arg, env var,
+// bundled-runtimes namespace (post-Task-16), legacy vendor/openclaw-runtime/current.
+let runtimeExtensionsDir;
+{
+  let bundledDefault = null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+    const v = pkg.runtimeManifest?.openclaw?.version;
+    if (v) bundledDefault = path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', v, 'current', 'extensions');
+  } catch {}
+  const legacyDefault = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current', 'extensions');
+  runtimeExtensionsDir = process.argv[2]
+    || process.env.OPENCLAW_RUNTIME_DIR && path.join(process.env.OPENCLAW_RUNTIME_DIR, 'extensions')
+    || (bundledDefault && fs.existsSync(bundledDefault) ? bundledDefault : null)
+    || legacyDefault;
+}
 
 // Verify runtime extensions directory exists
 if (!fs.existsSync(runtimeExtensionsDir)) {
