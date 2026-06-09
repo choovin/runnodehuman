@@ -539,6 +539,26 @@ async function beforePack(context) {
         prefix: 'python-win',
       },
     ];
+
+    // Include all 8 bundled runtimes (except openclaw, which is added
+    // separately below as the cfmind/ source). Each runtime is read from
+    // vendor/bundled-runtimes/<name>/<version>/win-x64/ and unpacked into
+    // wesight-runtime/<name>/<version>/win-x64/ at install time.
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+    const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+    for (const name of runtimeNames) {
+      if (name === 'openclaw') continue; // handled separately as cfmind
+      const version = pkg.runtimeManifest?.[name]?.version;
+      if (!version) continue;
+      const src = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, version, 'win-x64');
+      if (existsSync(src)) {
+        sources.push({
+          label: `Bundled ${name} runtime`,
+          dir: src,
+          prefix: path.join('wesight-runtime', name, version, 'win-x64'),
+        });
+      }
+    }
     if (packageOpenClawRuntime) {
       const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
       const openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
