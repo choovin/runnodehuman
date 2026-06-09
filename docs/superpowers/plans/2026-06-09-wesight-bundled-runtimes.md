@@ -36,7 +36,9 @@ Docs: `AGENTS.md`
 
 ## Task ordering rationale
 
-Tasks are ordered so each one produces a self-contained, committable change. Early tasks establish the manifest + resolver skeleton (TDD); middle tasks wire the CI script and the hook; later tasks update the OpenClaw migration (10+ files), the call sites, and the docs. Tests are interleaved with the code they cover, not deferred to the end.
+Tasks are ordered so each one produces a self-contained, committable change. Early tasks establish the manifest + resolver skeleton (TDD); middle tasks wire the CI script and the hook; later tasks update the call sites, lint rules, docs, and smoke-test the result. Tests are interleaved with the code they cover, not deferred to the end.
+
+**OpenClaw migration is Task 12a (renumbered from 16)** — it must run *before* Tasks 13/14 (hooks + Windows tar) because the beforePack hook verifies the OpenClaw slice under `vendor/bundled-runtimes/openclaw/<ver>/<target>/`, which only exists after the OpenClaw migration. The original task number 16 was retained as a cross-reference alias.
 
 ---
 
@@ -282,6 +284,7 @@ Expected: FAIL — `./runtimeResolver` does not exist.
 ```ts
 // src/main/runtimeResolver.ts
 import path from 'path';
+import fs from 'fs';
 import { RuntimeName } from '../shared/runtime/constants';
 
 const RUNTIME_BINARY: Record<RuntimeName, string> = {
@@ -350,8 +353,7 @@ export class RuntimeResolver {
     const binary = RUNTIME_BINARY[name];
     const fullPath = path.join(this.rootFor(name), binary);
     try {
-      // accessSync throws if the file does not exist; we never propagate
-      require('fs').accessSync(fullPath, require('fs').constants.X_OK);
+      fs.accessSync(fullPath, fs.constants.X_OK);
       return fullPath;
     } catch {
       return null;
@@ -383,7 +385,7 @@ export class RuntimeResolver {
       const nodeRoot = path.join(this.resourcesPath, 'wesight-runtime', 'node', RUNTIME_VERSION.node, slice);
       parts.push(path.join(nodeRoot, 'bin'));
     }
-    return parts.join(':');
+    return parts.join(path.delimiter);
   }
 
   getHealth(): ResolvedRuntimeMap {
@@ -448,42 +450,33 @@ registerRuntimeHandlers(runtimeResolver);
 ```ts
 import { ipcMain } from 'electron';
 import { RuntimeName } from '../../shared/runtime/constants';
-import type { RuntimeResolver, ResolvedRuntimeMap } from '../runtimeResolver';
+import type { RuntimeResolver } from '../runtimeResolver';
 
 export const RuntimeIpcChannel = {
   GetHealth: 'runtime:get-health',
 } as const;
 
+export interface SerializedRuntimeHealth {
+  ok: true;
+  runtimes: Array<{
+    name: RuntimeName;
+    ok: boolean;
+    path: string | null;
+    version: string;
+  }>;
+}
+
 export function registerRuntimeHandlers(resolver: RuntimeResolver): void {
-  ipcMain.handle(RuntimeIpcChannel.GetHealth, (): SerializedHealth => {
+  ipcMain.handle(RuntimeIpcChannel.GetHealth, (): SerializedRuntimeHealth => {
     const health = resolver.getHealth();
-    return serialize(health);
+    const runtimes = Array.from(health.entries()).map(([name, value]) => ({
+      name,
+      ok: value !== null,
+      path: value === null ? null : value.path,
+      version: value === null ? '' : value.version,
+    }));
+    return { ok: true, runtimes };
   });
-}
-
-interface SerializedRuntime {
-  name: RuntimeName;
-  path: string;
-  version: string;
-  source: 'bundled';
-}
-
-interface SerializedHealth {
-  resolved: Array<[RuntimeName, SerializedRuntime]>;
-  missing: RuntimeName[];
-}
-
-function serialize(map: ResolvedRuntimeMap): SerializedHealth {
-  const resolved: Array<[RuntimeName, SerializedRuntime]> = [];
-  const missing: RuntimeName[] = [];
-  for (const [name, value] of map.entries()) {
-    if (value === null) {
-      missing.push(name);
-    } else {
-      resolved.push([name, { name: value.name, path: value.path, version: value.version, source: value.source }]);
-    }
-  }
-  return { resolved, missing };
 }
 ```
 
@@ -562,10 +555,49 @@ import { setRuntimeResolver } from './libs/claudeSettings';
 setRuntimeResolver(runtimeResolver);
 ```
 
-- [ ] **Step 6: Run typecheck and tests**
+- [ ] **Step 6: Add the spec-required test cases for `claudeSettings.test.ts`**
+
+If `src/main/libs/claudeSettings.test.ts` does not already test the
+resolver-aware path, add two cases (per spec §5.1):
+
+```ts
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { getClaudeCodePath, setRuntimeResolver } from './claudeSettings';
+import { RuntimeResolver } from '../runtimeResolver';
+
+describe('getClaudeCodePath with RuntimeResolver', () => {
+  afterEach(() => {
+    setRuntimeResolver(null as unknown as RuntimeResolver);
+  });
+
+  test('prefers resolver path in packaged build when resolver returns a value', () => {
+    const fakeResolver = {
+      tryGetPath: vi.fn((name: string) => name === 'claudecode' ? '/bundled/claude' : null),
+    } as unknown as RuntimeResolver;
+    setRuntimeResolver(fakeResolver);
+    // Stub app.isPackaged to true
+    vi.mock('electron', () => ({ app: { isPackaged: true } }));
+    expect(getClaudeCodePath()).toBe('/bundled/claude');
+  });
+
+  test('falls back to asar.unpacked path when resolver returns null', () => {
+    const fakeResolver = {
+      tryGetPath: vi.fn(() => null),
+    } as unknown as RuntimeResolver;
+    setRuntimeResolver(fakeResolver);
+    vi.mock('electron', () => ({ app: { isPackaged: true, getAppPath: () => '/app' } }));
+    // Path under app.asar.unpacked is returned
+    const path = getClaudeCodePath();
+    expect(path).toContain('app.asar.unpacked');
+    expect(path).toContain('claude-agent-sdk');
+  });
+});
+```
+
+- [ ] **Step 7: Run typecheck and tests**
 
 Run: `npx tsc --project electron-tsconfig.json --noEmit && npx vitest run src/main/libs/claudeSettings.test.ts`
-Expected: clean typecheck; existing tests still pass.
+Expected: clean typecheck; existing tests + 2 new resolver tests pass.
 
 - [ ] **Step 7: Commit**
 
@@ -599,42 +631,59 @@ export function setRuntimeResolver(r: RuntimeResolver): void {
 }
 ```
 
-- [ ] **Step 3: Map engine names to RuntimeName**
+- [ ] **Step 3: Map in-scope engine names to RuntimeName**
 
-In the same file, add a private helper:
+Only the 3 in-scope engines (`claude`, `codex`, `hermes`) are in the bundled-runtime set. The other engines (`qwen`, `opencode`, `grok`, `deepseek-tui`) are NOT in the 8-bundled list — they continue to use the existing `npm install -g` / `curl | bash` install path and are looked up on the host's `PATH` at spawn time. Restrict the helper to the 3 in-scope engines only:
 
 ```ts
 function engineToRuntimeName(command: string): RuntimeName | null {
   switch (command) {
     case 'claude': return RuntimeName.ClaudeCode;
     case 'codex': return RuntimeName.Codex;
-    case 'qwen': return RuntimeName.QwenCode as unknown as RuntimeName; // not bundled; see below
-    case 'opencode': return RuntimeName.OpenCode as unknown as RuntimeName;
-    case 'grok': return RuntimeName.GrokBuild as unknown as RuntimeName;
-    case 'deepseek-tui': return RuntimeName.DeepSeekTui as unknown as RuntimeName;
     case 'hermes': return RuntimeName.Hermes;
     default: return null;
   }
 }
 ```
 
-Note: the cast `as unknown as RuntimeName` is intentional — engines not in the bundled list fall through to PATH lookup. RuntimeName currently does not include `qwencode`, `opencode`, etc.; only the 8 bundled runtimes. For the in-scope engines (claude, codex, hermes) the cast is unnecessary; for out-of-scope engines the helper returns `null` via `default` (remove the cast expressions for those engines to keep TS clean). Restrict the switch to: `claude` → ClaudeCode, `codex` → Codex, `hermes` → Hermes; let the rest fall through to the existing PATH lookup unchanged.
+When `engineToRuntimeName` returns `null`, the spawn site continues to use
+the existing `resolveSpawnCommandSpec` PATH lookup unchanged. The
+`externalAgentCliInstaller` install path for the non-bundled engines is
+preserved verbatim.
 
 - [ ] **Step 4: Patch `resolveSpawnCommandSpec` to use the resolver for in-scope engines**
 
-Find the function that resolves the command name to a path (search for `resolveSpawnCommandSpec` or `command:` near the spawn call). At the top of that function, before any other resolution:
+Find the function that resolves the command name to a path (search for `resolveSpawnCommandSpec` or `command:` near the spawn call). At the top of that function, before any other resolution, add a resolver fast-path that returns the command name unchanged (so the existing caller doesn't need to change shape) and a side-channel for PATH:
 
 ```ts
 const resolverName = engineToRuntimeName(command);
 if (resolverName && runtimeResolver) {
   const resolved = runtimeResolver.tryGetPath(resolverName);
   if (resolved) {
-    return { command: resolved, prependPath: runtimeResolver.buildPath(resolverName) };
+    // Stash the prependPath for the spawn site to read. The spawn site
+    // (around line 463 of this file) calls `applySpawnEnvOverrides(env, ...)
+    // which we extend in Task 6 to consult this side-channel.
+    pendingPrependPath = runtimeResolver.buildPath(resolverName);
+    return { command: resolved };
   }
 }
 ```
 
-`prependPath` is consumed by the call site that builds `env.PATH` (see Task 6).
+`pendingPrependPath` is a module-level variable in
+`externalCliRuntimeAdapter.ts`. The spawn site reads it before
+constructing `env`:
+
+```ts
+if (pendingPrependPath) {
+  env.PATH = pendingPrependPath + (env.PATH ? path.delimiter + env.PATH : '');
+  pendingPrependPath = null;
+}
+```
+
+(Alternative: thread a `prependPath: string | null` through the existing
+return value if the current function signature can be widened without
+breaking callers. The side-channel above is a fallback if widening is
+invasive.)
 
 - [ ] **Step 5: Run typecheck**
 
@@ -789,8 +838,52 @@ setInstallerResolver(runtimeResolver);
 
 - [ ] **Step 7: Run typecheck and tests**
 
-Run: `npx tsc --project electron-tsconfig.json --noEmit && npx vitest run src/main/libs/externalAgentCliInstaller.test.ts 2>&1 | tail -20`
-Expected: clean typecheck; existing tests pass.
+If `src/main/libs/externalAgentCliInstaller.test.ts` does not exist, create it first with the spec's required test cases:
+
+```ts
+// src/main/libs/externalAgentCliInstaller.test.ts
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { ExternalAgentCliInstaller } from './externalAgentCliInstaller';
+import { setRuntimeResolver } from './externalAgentCliInstaller';
+import { RuntimeName } from '../../shared/runtime/constants';
+import { RuntimeResolver } from '../runtimeResolver';
+
+let installer: ExternalAgentCliInstaller;
+let fakeResolver: RuntimeResolver;
+
+beforeEach(() => {
+  fakeResolver = {
+    tryGetPath: vi.fn().mockReturnValue('/bundled/bin/claude'),
+    buildPath: vi.fn().mockReturnValue('/bundled/bin'),
+  } as unknown as RuntimeResolver;
+  setRuntimeResolver(fakeResolver);
+});
+
+afterEach(() => {
+  setRuntimeResolver(null as unknown as RuntimeResolver);
+});
+
+describe('ExternalAgentCliInstaller fast path', () => {
+  test('returns bundled binaryPath and version on resolver hit', async () => {
+    // stub spawn for --version
+    vi.mock('child_process', () => ({
+      spawn: { sync: vi.fn().mockReturnValue({ stdout: '1.0.0\n', stderr: '' }) },
+    }));
+    installer = new ExternalAgentCliInstaller();
+    const r = await installer.runInstall('claude');
+    expect(r.success).toBe(true);
+    expect(r.installMethod).toBe('bundled');
+    expect(r.binaryPath).toBe('/bundled/bin/claude');
+  });
+  test('falls through to npm install -g when resolver returns null', async () => {
+    setRuntimeResolver({ tryGetPath: () => null, buildPath: () => '' } as unknown as RuntimeResolver);
+    // existing npm-install path is exercised by the existing test suite
+  });
+});
+```
+
+Then run: `npx tsc --project electron-tsconfig.json --noEmit && npx vitest run src/main/libs/externalAgentCliInstaller.test.ts 2>&1 | tail -20`
+Expected: clean typecheck; existing tests + new tests pass.
 
 - [ ] **Step 8: Commit**
 
@@ -827,7 +920,7 @@ Insert at the top of `package.json`, before `"main"`:
 
 The `REPLACE_AFTER_FIRST_FETCH` placeholder is filled in by the first successful CI run.
 
-- [ ] **Step 2: Add the npm script**
+- [ ] **Step 2: Add the npm script and chain it into all dist scripts**
 
 In the `scripts` section of `package.json`, add:
 
@@ -835,10 +928,27 @@ In the `scripts` section of `package.json`, add:
 "setup-bundled-runtimes": "node scripts/setup-bundled-runtimes.cjs"
 ```
 
-Also chain it into `predist:mac`, `predist:win`, `predist:linux`. The new chain is:
+Then update all 8 `dist:*` scripts to include the setup step. Read the current
+scripts block, then for each of these existing scripts, prepend
+`npm run setup-bundled-runtimes &&` (after the `predist:*` reference, which
+already includes the step):
+
+- `dist:mac`: becomes `npm run predist:mac && npm run setup-bundled-runtimes && electron-builder --mac --config electron-builder.json`
+- `dist:mac:x64`: same with `--x64`
+- `dist:mac:arm64`: same with `--arm64`
+- `dist:mac:universal`: same with `--universal`
+- `dist:win`: same with `--win --x64`
+- `dist:linux`: same with `--linux`
+- `pack` and `dist` (the unsuffixed top-level scripts): same treatment
+
+The `predist:*` chain order is:
 - `predist:mac`: `npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills`
 - `predist:win`: `npm run setup:python-runtime && npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills`
 - `predist:linux`: same as `predist:mac` (no Windows Python)
+
+`setup-bundled-runtimes` must run before `compile:electron` so the
+`beforePack` hook can verify the runtime slices exist when electron-builder
+runs.
 
 - [ ] **Step 3: Write the failing integration test**
 
@@ -880,8 +990,12 @@ const { Readable } = require('stream');
 const { execFileSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
-const RUNTIME_MANIFEST = PACKAGE_JSON.runtimeManifest;
+// Lazily read package.json so importing this module from tests does not
+// crash if the working directory is not the project root.
+function readRuntimeManifest() {
+  const pkgPath = path.join(PROJECT_ROOT, 'package.json');
+  return JSON.parse(fs.readFileSync(pkgPath, 'utf-8')).runtimeManifest;
+}
 
 const SHA256_RE = /^[0-9a-f]{64}$/i;
 
@@ -958,6 +1072,7 @@ async function fetchHermes() { throw new Error('fetchHermes not yet implemented'
 async function fetchOpenClaw() { throw new Error('fetchOpenClaw not yet implemented'); }
 
 async function main() {
+  const RUNTIME_MANIFEST = readRuntimeManifest();
   parseManifest(RUNTIME_MANIFEST);
   const slice = (() => {
     const platform = process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux';
@@ -979,7 +1094,7 @@ async function main() {
   for (const [name, fetcher] of Object.entries(fetchers)) {
     const spec = RUNTIME_MANIFEST[name];
     console.log(`[setup-bundled-runtimes] fetching ${name}@${spec.version} for ${slice}...`);
-    await fetcher(spec.version, slice);
+    await fetcher(spec.version, slice, spec.sha256);
   }
   console.log('[setup-bundled-runtimes] done');
 }
@@ -1019,6 +1134,7 @@ git commit -m "feat(build): add setup-bundled-runtimes cjs skeleton"
 
 ```js
 const NODE_BASE = 'https://nodejs.org/dist';
+const tar = require('tar');
 
 async function fetchNode(version, slice) {
   const [platform, arch] = slice.split('-');
@@ -1042,13 +1158,20 @@ async function fetchNode(version, slice) {
     destRel,
     expectedSha256: RUNTIME_MANIFEST.node.sha256,
   });
-  // Extract just the bin/ and lib/ contents into the slice dir.
+  // Use the `tar` npm package (cross-platform; no host `tar` binary needed).
   const extractRoot = path.join(PROJECT_ROOT, 'vendor', 'bundled-runtimes', 'node', version, slice);
   fs.mkdirSync(extractRoot, { recursive: true });
-  execFileSync('tar', ['-xJf', destAbs, '-C', extractRoot, '--strip-components=1'], { stdio: 'inherit' });
+  await tar.x({
+    file: destAbs,
+    cwd: extractRoot,
+    strip: 1,
+  });
   fs.rmSync(destAbs);
 }
 ```
+
+Note: `tar` is already a project dependency (used by
+`scripts/pack-openclaw-tar.cjs`), so no new dependency is added.
 
 - [ ] **Step 2: Test manually on host**
 
@@ -1122,21 +1245,49 @@ Run: `sed -n '78,150p' electron-builder.json`
 
 - [ ] **Step 2: Add `extraResources` for the wesight-runtime directory under `mac.extraResources`**
 
-Inside the `mac` block, after the existing `extraResources` array, prepend a new entry:
+Inside the `mac` block, after the existing `extraResources` array, prepend a new entry for each of the 8 runtimes. The `from` path includes the **platform-arch slice** (so each mac build only carries the slices it needs):
 
 ```json
 {
-  "from": "vendor/bundled-runtimes/node/${env.WESIGHT_RUNTIME_VERSION_NODE}",
+  "from": "vendor/bundled-runtimes/node/${nodeVersion}/darwin-arm64",
   "to": "wesight-runtime/node",
+  "filter": ["**/*"]
+},
+{
+  "from": "vendor/bundled-runtimes/python/${pythonVersion}/darwin-arm64",
+  "to": "wesight-runtime/python",
   "filter": ["**/*"]
 }
 ```
 
-Add similar entries for python, git, gh, claudecode, codex, hermes, openclaw. The `WESIGHT_RUNTIME_VERSION_*` env vars are set in `electron-builder-hooks.cjs:beforePack` from `package.json:runtimeManifest` so electron-builder's templating resolves correctly.
+(… and similarly for the other 6 runtimes.)
+
+The `${nodeVersion}` / `${pythonVersion}` / etc. are electron-builder template
+substitutions. The hook in Task 12 sets these env vars before invoking
+electron-builder by reading them from `package.json:runtimeManifest`:
+
+```js
+// in electron-builder-hooks.cjs:beforePack
+const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+for (const [name, spec] of Object.entries(pkg.runtimeManifest)) {
+  process.env[`WESIGHT_BUNDLED_RUNTIME_VERSION_${name.toUpperCase()}`] = spec.version;
+}
+```
+
+(These env vars are local to the beforePack context; they are not consumed
+in the hook itself but are read by electron-builder's template
+substitution when it processes `extraResources`.)
+
+The `from` path includes the **slice** (e.g. `darwin-arm64`) so the
+`extraResources` copy only pulls the current target's slice into the
+bundle, not all slices.
 
 - [ ] **Step 3: Add the same entries under `linux.extraResources`**
 
-Identical structure to mac.
+Identical structure to mac, but with `linux-x64` / `linux-arm64` in the
+`from` path. Add **two** entries per runtime (one for x64, one for
+arm64) so the same `linux.extraResources` array works for both
+`--linux --x64` and `--linux --arm64` invocations.
 
 - [ ] **Step 4: For Windows, do not add `extraResources`; instead extend the existing tar**
 
@@ -1161,6 +1312,8 @@ git commit -m "feat(build): add wesight-runtime to mac and linux extraResources"
 **Files:**
 - Modify: `scripts/electron-builder-hooks.cjs`
 
+> **EXECUTION ORDER NOTE:** This task must run **after** Task 16 (OpenClaw migration). The OpenClaw slice at `vendor/bundled-runtimes/openclaw/<ver>/<target>/` is required for the beforePack verification to pass. If you execute tasks in numeric order, **pause after Task 11 and run Task 16 before continuing**.
+
 - [ ] **Step 1: Read the current `beforePack` function**
 
 Run: `sed -n '489,560p' scripts/electron-builder-hooks.cjs`
@@ -1171,19 +1324,20 @@ At the end of `beforePack`, before the existing `applyMacIconFix` (or equivalent
 
 ```js
 // Verify all 8 bundled runtimes are present for the current target.
-const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+// Versions are read directly from package.json:runtimeManifest, not from
+// process.env, so the hook works regardless of how electron-builder was
+// invoked.
+const runtimeManifest = (() => {
+  const pkgPath = path.join(__dirname, '..', 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+  return pkg.runtimeManifest;
+})();
 const targetId = resolveOpenClawRuntimeTargetId(context);
-for (const name of runtimeNames) {
-  const sliceRoot = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, '<ver>', targetId);
-  // For verification, we read the version from process.env.WESIGHT_RUNTIME_VERSION_<NAME>
-  // which is set by the parent process before invoking electron-builder.
-  const version = process.env[`WESIGHT_RUNTIME_VERSION_${name.toUpperCase()}`];
-  if (!version) {
-    throw new Error(`[electron-builder-hooks] WESIGHT_RUNTIME_VERSION_${name.toUpperCase()} is not set; set it in predist:* scripts.`);
-  }
-  const slicePath = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, version, targetId);
+for (const name of Object.keys(runtimeManifest)) {
+  const spec = runtimeManifest[name];
+  const slicePath = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, spec.version, targetId);
   if (!existsSync(slicePath)) {
-    throw new Error(`[electron-builder-hooks] Runtime ${name}@${version} missing for target ${targetId}. Run 'npm run setup-bundled-runtimes' first.`);
+    throw new Error(`[electron-builder-hooks] Runtime ${name}@${spec.version} missing for target ${targetId}. Run 'npm run setup-bundled-runtimes' first.`);
   }
 }
 console.log(`[electron-builder-hooks] Verified all 8 runtimes for target ${targetId}.`);
@@ -1194,36 +1348,37 @@ console.log(`[electron-builder-hooks] Verified all 8 runtimes for target ${targe
 Find the `afterPack(context)` function. At the end, add:
 
 ```js
-if (process.platform === 'win32' && process.env.WESIGHT_BUNDLED_RUNTIME_SIGN === '1') {
-  const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
-  for (const name of runtimeNames) {
-    const version = process.env[`WESIGHT_RUNTIME_VERSION_${name.toUpperCase()}`];
-    if (!version) continue;
-    const binaryRel = ({
-      node: 'bin/node.exe',
-      python: 'python.exe',
-      git: 'bin/git.exe',
-      gh: 'bin/gh.exe',
-      claudecode: 'bin/claude.cmd',
-      codex: 'bin/codex.cmd',
-      hermes: 'bin/hermes.exe',
-      openclaw: 'openclaw.mjs',
-    })[name];
-    if (!binaryRel) continue;
-    const binaryAbs = path.join(context.appOutDir, 'resources', 'wesight-runtime', name, version, 'win-x64', binaryRel);
-    if (!existsSync(binaryAbs)) continue;
-    const { spawnSync } = require('child_process');
-    const r = spawnSync('signtool', [
-      'sign', '/fd', 'sha256', '/tr', 'http://timestamp.digicert.com', '/td', 'sha256',
-      '/f', process.env.CSC_LINK || '', '/p', process.env.CSC_KEY_PASSWORD || '',
-      binaryAbs,
-    ], { stdio: 'inherit' });
-    if (r.status !== 0) {
-      throw new Error(`[electron-builder-hooks] signtool failed for ${binaryAbs} (status ${r.status})`);
+  if (process.platform === 'win32' && process.env.WESIGHT_BUNDLED_RUNTIME_SIGN === '1') {
+    const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+    for (const name of runtimeNames) {
+      const version = pkg.runtimeManifest?.[name]?.version;
+      if (!version) continue;
+      const binaryRel = ({
+        node: 'bin/node.exe',
+        python: 'python.exe',
+        git: 'bin/git.exe',
+        gh: 'bin/gh.exe',
+        claudecode: 'bin/claude.cmd',
+        codex: 'bin/codex.cmd',
+        hermes: 'bin/hermes.exe',
+        openclaw: 'openclaw.mjs',
+      })[name];
+      if (!binaryRel) continue;
+      const binaryAbs = path.join(context.appOutDir, 'resources', 'wesight-runtime', name, version, 'win-x64', binaryRel);
+      if (!existsSync(binaryAbs)) continue;
+      const { spawnSync } = require('child_process');
+      const r = spawnSync('signtool', [
+        'sign', '/fd', 'sha256', '/tr', 'http://timestamp.digicert.com', '/td', 'sha256',
+        '/f', process.env.CSC_LINK || '', '/p', process.env.CSC_KEY_PASSWORD || '',
+        binaryAbs,
+      ], { stdio: 'inherit' });
+      if (r.status !== 0) {
+        throw new Error(`[electron-builder-hooks] signtool failed for ${binaryAbs} (status ${r.status})`);
+      }
     }
+    console.log('[electron-builder-hooks] Signed all 8 Windows runtimes.');
   }
-  console.log('[electron-builder-hooks] Signed all 8 Windows runtimes.');
-}
 ```
 
 - [ ] **Step 4: Run typecheck (no impact but sanity check)**
@@ -1255,8 +1410,9 @@ The existing tar pack builds a sources list and calls `packMultipleSources(sourc
 
 ```js
 const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
 for (const name of runtimeNames) {
-  const version = process.env[`WESIGHT_RUNTIME_VERSION_${name.toUpperCase()}`];
+  const version = pkg.runtimeManifest?.[name]?.version;
   if (!version) continue;
   const src = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, version, 'win-x64');
   if (existsSync(src)) {
@@ -1265,14 +1421,25 @@ for (const name of runtimeNames) {
 }
 ```
 
-- [ ] **Step 3: Update the NSIS installer to extract the new tar contents**
+- [ ] **Step 3: Add a new NSIS step to extract `wesight-runtime/` from the tar**
 
-Read `scripts/nsis-installer.nsh:84-100` to find the `unpack-cfmind.cjs`-style extraction. The new tar entries under `wesight-runtime/` need to be extracted into `$INSTDIR\resources\wesight-runtime\`. This is a small change to the existing `unpack-*.cjs` script (or the new `unpack-wesight-runtime.cjs`) that the NSIS installer invokes.
+Read `scripts/nsis-installer.nsh` to find the existing tar-extract step
+(the one that calls `unpack-cfmind.cjs`). After that step, add a new
+`nsExec::ExecToLog` that invokes a new `scripts/unpack-wesight-runtime.cjs`
+helper. The new helper:
+
+- Reads `<install dir>\resources\win-resources.tar` (the existing tar).
+- Extracts every path under `wesight-runtime/` from the tar into
+  `<install dir>\resources\wesight-runtime\`.
+- Uses the `tar` npm package (already a project dependency) for
+  cross-platform tar extraction.
+
+The NSIS change is a single `nsExec::ExecToLog 'node unpack-wesight-runtime.cjs "$INSTDIR"'` line.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/electron-builder-hooks.cjs scripts/nsis-installer.nsh scripts/unpack-cfmind.cjs
+git add scripts/electron-builder-hooks.cjs scripts/nsis-installer.nsh scripts/unpack-wesight-runtime.cjs
 git commit -m "feat(build): include wesight-runtime in Windows installer tar"
 ```
 
