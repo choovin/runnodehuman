@@ -6,6 +6,23 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { RuntimeName } from '../../../shared/runtime/constants';
+import type { RuntimeResolver } from '../../runtimeResolver';
+
+let runtimeResolver: RuntimeResolver | null = null;
+export function setRuntimeResolver(r: RuntimeResolver | null): void {
+  runtimeResolver = r;
+}
+
+function engineToRuntimeName(command: string): RuntimeName | null {
+  switch (command) {
+    case 'claude': return RuntimeName.ClaudeCode;
+    case 'codex': return RuntimeName.Codex;
+    case 'hermes': return RuntimeName.Hermes;
+    default: return null;
+  }
+}
+
 import {
   ClaudeCodePermissionMode,
   type CliCoworkAgentEngine,
@@ -168,6 +185,7 @@ type SpawnCommandSpec = {
   command: string;
   args: string[];
   source: string;
+  prependPath?: string;
 };
 
 type AssistantOutputStats = {
@@ -460,7 +478,9 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
     }
     const child = spawn(spawnSpec.command, spawnSpec.args, {
       cwd,
-      env,
+      env: spawnSpec.prependPath
+        ? { ...env, PATH: spawnSpec.prependPath + (env.PATH ? path.delimiter + env.PATH : '') }
+        : env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: process.platform === 'win32',
     });
@@ -826,11 +846,30 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
     return 'qwen';
   }
 
+
   private resolveSpawnCommandSpec(
     command: string,
     args: string[],
     env: Record<string, string | undefined>,
   ): SpawnCommandSpec {
+    // Resolver fast path: if RuntimeResolver can find the in-scope engine
+    // binary, return its absolute path. The resolver is consulted only for
+    // the 3 in-scope engines (claude, codex, hermes). Other engines
+    // (qwen, opencode, grok, deepseek-tui) continue to use the host PATH
+    // lookup unchanged.
+    const resolverName = engineToRuntimeName(command);
+    if (resolverName && runtimeResolver) {
+      const resolved = runtimeResolver.tryGetPath(resolverName);
+      if (resolved) {
+        return {
+          command: resolved,
+          args,
+          source: 'bundled-resolver',
+          prependPath: runtimeResolver.buildPath(resolverName),
+        };
+      }
+    }
+
     if (this.engine !== CoworkAgentEngine.Codex || process.platform !== 'win32') {
       return { command, args, source: 'path' };
     }

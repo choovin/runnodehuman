@@ -72,6 +72,7 @@ import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProvide
 import { RuntimeResolver } from './runtimeResolver';
 import { registerRuntimeHandlers } from './ipcHandlers/runtime';
 import { setRuntimeResolver } from './libs/claudeSettings';
+import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -7453,6 +7454,7 @@ if (!gotTheLock) {
     }
     registerRuntimeHandlers(runtimeResolver);
     setRuntimeResolver(runtimeResolver);
+    setExternalCliRuntimeResolver(runtimeResolver);
 
     console.log('[Main] initApp: creating window');
     createWindow();
