@@ -99,8 +99,39 @@ function writeManifestSlice(name, version, slice, files) {
 //      using the `tar` npm package (cross-platform).
 //   4. fs.rmSync the downloaded archive.
 
-async function fetchNode(version, slice) {
-  throw new Error('fetchNode: not yet implemented');
+async function fetchNode(version, slice, expectedSha256) {
+  const NODE_BASE = 'https://nodejs.org/dist';
+  const tar = require('tar');
+  const [platform, arch] = slice.split('-');
+  let url, archiveExt;
+  if (platform === 'darwin') {
+    url = `${NODE_BASE}/v${version}/node-v${version}-darwin-${arch}.tar.xz`;
+    archiveExt = 'tar.xz';
+  } else if (platform === 'linux') {
+    url = `${NODE_BASE}/v${version}/node-v${version}-linux-${arch}.tar.xz`;
+    archiveExt = 'tar.xz';
+  } else if (platform === 'win32') {
+    url = `${NODE_BASE}/v${version}/node-v${version}-win-x64.7z`;
+    archiveExt = '7z';
+  }
+  if (!url) throw new Error(`unsupported node slice: ${slice}`);
+  const ext = archiveExt.split('.').pop();
+  const destRel = `node-v${version}-${platform}-${arch}.${ext}`;
+  const destAbs = await downloadAndVerify({
+    name: 'node',
+    version,
+    url,
+    destRel,
+    expectedSha256,
+  });
+  const extractRoot = path.join(vendorDir('node', version), slice);
+  fs.mkdirSync(extractRoot, { recursive: true });
+  await tar.x({
+    file: destAbs,
+    cwd: extractRoot,
+    strip: 1,
+  });
+  fs.rmSync(destAbs);
 }
 async function fetchPython(version, slice) {
   throw new Error('fetchPython: not yet implemented');
