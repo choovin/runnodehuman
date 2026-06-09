@@ -108,6 +108,13 @@
           "!**/test/**",
           "!**/__tests__/**"
         ]
+      },
+      {
+        "from": "vendor/bundled-runtimes",
+        "to": "wesight-runtime",
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },
@@ -171,6 +178,13 @@
           "!**/tests/**",
           "!**/test/**",
           "!**/__tests__/**"
+        ]
+      },
+      {
+        "from": "vendor/bundled-runtimes",
+        "to": "wesight-runtime",
+        "filter": [
+          "**/*"
         ]
       }
     ],
