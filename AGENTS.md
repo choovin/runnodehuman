@@ -500,3 +500,39 @@ memory file BEFORE replying that you have remembered it.
 - The cron system handles result delivery automatically based on the task's delivery configuration. Calling `message` from a cron session without an associated channel will fail with "Channel is required".
 - Instead, output your results as plain text in the session. If the task has a delivery channel configured, the cron system will forward the output automatically.
 - If the user's prompt asks to "send" or "notify", and you are in a cron session, produce the content as session output rather than calling `message`. Append a note: "（此定时任务未配置 IM 通知通道，结果已保存在执行记录中。如需自动推送，请在定时任务设置中配置通知通道。）"
+
+## Bundled Runtimes
+
+WeSight ships 8 zero-dependency runtimes in every electron-builder installer so end users can install the app without Node.js, Python, Git, or any CLI toolchain on their machine. The 8 runtimes are:
+
+- `node` — Node.js 22 LTS, used by Skill/MCP subprocesses
+- `python` — CPython 3.12, used by Skill scripts
+- `git` — libgit2-backed CLI for repo operations
+- `gh` — GitHub CLI for PR/issue integration
+- `claudecode` — Claude Code CLI (bundled with the `claude` shebang binary)
+- `codex` — OpenAI Codex CLI
+- `openclaw` — OpenClaw engine + its `cfmind/` namespace (treated separately because of its symlink/junction-based versioning)
+- `hermes` — Hermes message gateway
+
+### How it works
+
+1. `package.json` has a top-level `runtimeManifest` field declaring `{version, sha256}` for each runtime across `(platform, arch)` slices.
+2. `scripts/setup-bundled-runtimes.cjs` fetches the 8 runtimes into `vendor/bundled-runtimes/<runtime>/<version>/<platform>-<arch>/` during `predist:*` (gated on the active target). Only the active platform+arch slice is fetched for local builds; CI fetches all 3 slices.
+3. `electron-builder.json` copies `vendor/bundled-runtimes` into the bundle as the `wesight-runtime` extraResources directory on macOS and Linux. On Windows, `scripts/electron-builder-hooks.cjs` packages the non-OpenClaw runtimes into `win-resources.tar` for the NSIS installer to unpack at install time. OpenClaw goes to `resources/cfmind/` as before.
+4. `src/main/runtimeResolver.ts` is the **only** module that knows the resource paths. It exposes `tryGetPath`, `tryGetAll`, `buildPath`, and `getHealth` to other modules.
+5. macOS: `scripts/notarize.js` re-signs the bundle with `codesign --force --deep --sign` before notarization so embedded binaries inherit the app signature. `src/main/runtimeHealth.ts` strips `com.apple.quarantine` on first launch.
+6. Windows: NSIS installer `scripts/nsis-installer.nsh` runs `Add-MpPreference -ExclusionPath` for both `cfmind/` and `wesight-runtime/` (gated on `WESIGHT_ENABLE_DEFENDER_EXCLUSION=1` opt-in).
+
+### Code rules
+
+- **All bundled-runtime lookups must go through `runtimeResolver`.** Direct paths under `vendor/bundled-runtimes/` or `process.resourcesPath/wesight-runtime/` are forbidden in `src/main/` — enforced by ESLint `no-restricted-syntax` (see `eslint.config.mjs`).
+- **MCP user-configured commands take precedence.** If a user configures an MCP server with `/usr/local/bin/claude`, do not route it through the resolver.
+- **SKILL subprocesses are unaffected** by the resolver — they read their own configs from `SKILLs/**/manifest.json` and may use system Node/Python.
+- **Dev mode skips resolver lookups.** `runtimeResolver` returns `null`/`[]` in dev mode (`process.env.NODE_ENV === 'development'`); modules fall back to legacy `vendor/openclaw-runtime/current` and system PATH.
+- **OpenClaw uses a `current/` symlink** in the bundled namespace; the symlink target is the versioned directory set during `setup-bundled-runtimes`. On Windows the equivalent is a `cfmind` junction.
+
+### Operational notes
+
+- `runtimeManifest.sha256` values are placeholders (`"REPLACE_AFTER_FIRST_FETCH"`) until the first successful CI run. The `beforePack` hook in `scripts/electron-builder-hooks.cjs` (`verifyBundledRuntimes`) will throw on first build attempt if the placeholders haven't been replaced with real SHA-256 digests.
+- `setup-bundled-runtimes` is gated on the active target — local macOS dev only fetches `darwin-arm64`. To fetch all slices, run `node scripts/setup-bundled-runtimes.cjs --all` (used by CI).
+- The Mac `--deep` re-sign in `notarize.js` only matters when bundled runtimes are present; in dev builds the `wesight-runtime/` directory is empty/missing and the codesign call is still a no-op.
