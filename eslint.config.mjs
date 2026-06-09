@@ -97,6 +97,29 @@ export default [
     },
   },
 
+  // Bundled-runtime resolver boundary: forbid direct references to
+  // vendor/bundled-runtimes/ under src/main/. All bundled-runtime lookups
+  // must go through src/main/runtimeResolver.ts. This catches accidental
+  // hardcoded paths and forces the resolver through review.
+  {
+    files: ['src/main/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "Literal[value=/vendor\\/bundled-runtimes/]",
+          message:
+            'Do not hardcode paths under vendor/bundled-runtimes/. Use src/main/runtimeResolver.ts instead.',
+        },
+        {
+          selector: "TemplateElement[value.raw=/vendor\\/bundled-runtimes/]",
+          message:
+            'Do not hardcode paths under vendor/bundled-runtimes/. Use src/main/runtimeResolver.ts instead.',
+        },
+      ],
+    },
+  },
+
   // Prettier must be last to override formatting rules
   eslintConfigPrettier,
 ];
