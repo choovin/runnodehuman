@@ -8,6 +8,8 @@ dist
 dist-electron
 .DS_Store
 .env 
+.env.production.local
+.env.development.local
 .claude/
 __pycache__/
 .codebuddy/
