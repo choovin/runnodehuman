@@ -68,7 +68,12 @@ function getOpenClawRuntimeBuildHint(targetId) {
 }
 
 function syncCurrentOpenClawRuntimeForTarget(context) {
-  const runtimeBase = path.join(__dirname, '..', 'vendor', 'openclaw-runtime');
+  const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+  const openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
+  if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+    throw new Error('[electron-builder-hooks] package.json:runtimeManifest.openclaw.version is not set. Run `npm run setup-bundled-runtimes` first.');
+  }
+  const runtimeBase = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', 'openclaw', openclawVersion);
   const currentRoot = path.join(runtimeBase, 'current');
   const targetId = resolveOpenClawRuntimeTargetId(context);
 
@@ -530,9 +535,11 @@ async function beforePack(context) {
       },
     ];
     if (packageOpenClawRuntime) {
+      const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+      const openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
       sources.unshift({
         label: 'OpenClaw runtime',
-        dir: path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+        dir: path.join(__dirname, '..', 'vendor', 'bundled-runtimes', 'openclaw', openclawVersion, 'current'),
         prefix: 'cfmind',
       });
     }

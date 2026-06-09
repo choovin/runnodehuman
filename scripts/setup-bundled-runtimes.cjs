@@ -271,22 +271,15 @@ async function fetchHermes(version, slice, expectedSha256) {
 }
 
 async function fetchOpenClaw(version, slice, expectedSha256) {
-  // OpenClaw has a non-trivial build chain. The existing `openclaw:runtime:<target>`
-  // npm scripts already produce a tree at vendor/openclaw-runtime/<target>/. After
-  // Task 16's migration, that tree is produced at
-  // vendor/bundled-runtimes/openclaw/<version>/<target>/ via the existing flow.
-  //
-  // For now, shell out to the existing per-target build and let Task 16
-  // complete the migration. The fetch is a no-op pass-through.
+  // OpenClaw has a non-trivial build chain. The existing
+  // `openclaw:runtime:<target>` npm scripts invoke scripts/build-openclaw-runtime.sh
+  // which writes the output to vendor/bundled-runtimes/openclaw/<version>/<target>/
+  // (post-Task-16 migration). We shell out to that flow.
   const { execFileSync } = require('child_process');
   const target = slice; // 'darwin-arm64' | 'win-x64' | 'linux-x64' | ...
-  const script = `openclaw:runtime:${target.replace('-', '-')}`;
-  console.log(`[fetchOpenClaw] delegating to npm run ${script} (handled by Task 16)`);
-  try {
-    execFileSync('npm', ['run', script], { stdio: 'inherit' });
-  } catch (e) {
-    console.warn(`[fetchOpenClaw] ${script} failed; expected before Task 16 completes migration`);
-  }
+  const script = `openclaw:runtime:${target}`;
+  console.log(`[fetchOpenClaw] delegating to npm run ${script}`);
+  execFileSync('npm', ['run', script], { stdio: 'inherit' });
 }
 
 async function main() {

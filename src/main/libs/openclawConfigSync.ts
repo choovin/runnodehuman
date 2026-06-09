@@ -309,10 +309,27 @@ const stripTemplateFrontMatter = (content: string): string => {
 const resolveBundledOpenClawAgentsTemplatePaths = (): string[] => {
   const runtimeRoots = app.isPackaged === true
     ? [path.join(process.resourcesPath, 'cfmind')]
-    : [
-        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
-      ];
+    : (() => {
+        const pkgPath = path.join(app.getAppPath(), 'package.json');
+        let openclawVersion = '';
+        try {
+          const pkg = require(pkgPath);
+          openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
+        } catch {
+          // ignore
+        }
+        if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+          return [
+            path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
+            path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
+          ];
+        }
+        const bundledBase = path.join('vendor', 'bundled-runtimes', 'openclaw', openclawVersion, 'current');
+        return [
+          path.join(app.getAppPath(), bundledBase),
+          path.join(process.cwd(), bundledBase),
+        ];
+      })();
 
   return runtimeRoots.map((runtimeRoot) => path.join(
     runtimeRoot,
