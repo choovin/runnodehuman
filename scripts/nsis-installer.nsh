@@ -110,7 +110,12 @@
   ; Windows build that should avoid real-time scanning of the bundled runtime.
   ; The command remains best-effort because enterprise policy may disallow it.
   !ifdef WESIGHT_ENABLE_DEFENDER_EXCLUSION
-    nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction Stop; Write-Output ok } catch { Write-Output skip }"'
+    ; Exclude both the OpenClaw runtime (cfmind/) and the 8 bundled runtimes
+    ; (wesight-runtime/) from real-time scanning. Without these exclusions,
+    ; Windows Defender quarantines python.exe and its .pyd extensions on
+    ; first launch. The exclusions are added before either runtime is unpacked
+    ; so the unpacked binaries are never scanned.
+    nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction Stop; Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\wesight-runtime$\" -ErrorAction Stop; Write-Output ok } catch { Write-Output skip }"'
     Pop $0
     Pop $1
     FileWrite $2 "defender-exclusion-add: exit=$0 result=$1$\r$\n"

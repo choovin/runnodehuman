@@ -75,6 +75,7 @@ import { setRuntimeResolver } from './libs/claudeSettings';
 import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
 import { setCoworkUtilRuntimeResolver } from './libs/coworkUtil';
 import { setRuntimeResolver as setInstallerRuntimeResolver } from './libs/externalAgentCliInstaller';
+import { stripQuarantineIfNeeded } from './runtimeHealth';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -7459,6 +7460,9 @@ if (!gotTheLock) {
     setExternalCliRuntimeResolver(runtimeResolver);
     setCoworkUtilRuntimeResolver(runtimeResolver);
     setInstallerRuntimeResolver(runtimeResolver);
+
+    // Strip macOS quarantine xattr on first launch (idempotent on other platforms).
+    stripQuarantineIfNeeded(process.resourcesPath);
 
     console.log('[Main] initApp: creating window');
     createWindow();
