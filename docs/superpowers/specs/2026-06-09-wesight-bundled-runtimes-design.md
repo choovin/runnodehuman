@@ -116,8 +116,11 @@ these binaries.
 5. **MCP server child processes are user-controlled.** The resolver's
    `buildPath` is NOT injected into `mcpServerManager`-spawned processes
    when the MCP server config specifies a different `command` (e.g.,
-   `python3.11`). User-configured MCP servers take precedence; the resolver
-   only supplies a default when the config omits an explicit command.
+   `python3.11`). User-configured MCP servers take precedence. When
+   the config omits an explicit `command`, the existing skip-with-log
+   behavior is preserved (`mcpServerManager` returns `null` and logs
+   `has no command, skipping`). The resolver does NOT supply a default
+   command in this version of the spec.
 6. **SKILLs (e.g. `SKILLs/web-search`) ship their own `node_modules`.** SKILL
    subprocesses run with their own bundled `node_modules` and are NOT
    affected by the resolver's PATH override. The resolver only applies to
@@ -146,8 +149,9 @@ these binaries.
 | Path | Change |
 | --- | --- |
 | `package.json` | Add `runtimeManifest` field with 8 version blocks; add `setup-bundled-runtimes` script; chain it into `predist:*` scripts in this exact order: `predist:mac: "npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills"`. `setup-bundled-runtimes` must run *before* `compile:electron` because the beforePack hook verifies the runtimes are present and the hook runs during `electron-builder`, which is invoked after `compile:electron`. The same chain applies to `predist:win` (additionally prepended with `setup:python-runtime` if Windows-specific Python handling is preserved) and `predist:linux`. |
-| `scripts/electron-builder-hooks.cjs` | Extend `beforePack(context)` to **verify** (not copy) that all 8 binaries are present for the target slice. On any miss, throw with an explicit message naming the runtime, expected path, and target. The actual copy into `appOutDir/.../resources/wesight-runtime/` is done by electron-builder's `extraResources` mechanism (see `electron-builder.json` below), not by the hook. Preserve existing `ensureBundledOpenClawRuntime` behaviour; OpenClaw is now sourced from `vendor/bundled-runtimes/openclaw/<ver>/<target>/` rather than the old `vendor/openclaw-runtime/<target>/`. On Windows, the same hook branch invokes `signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /f <pfx> /p <password>` for each of the 8 binaries after copy, gated on `process.env.WESIGHT_BUNDLED_RUNTIME_SIGN === '1'`. |
-| `electron-builder.json` | Add per-platform `extraResources` entries for `wesight-runtime/`. Each platform gets its own slice only: mac-arm64 → `vendor/bundled-runtimes/<name>/<ver>/darwin-arm64` for each of the 8 runtimes; win-x64 → `win-x64`; linux-x64 → `linux-x64`; etc. The `extraResources` mechanism is the **canonical copy** for runtime binaries — the `beforePack` hook is verification-only. Keep existing `SKILLs` and `tray` entries. |
+| `scripts/electron-builder-hooks.cjs` | Extend `beforePack(context)` to **verify** (not copy) that all 8 binaries are present for the target slice. On any miss, throw with an explicit message naming the runtime, expected path, and target. The actual copy into `appOutDir/.../resources/wesight-runtime/` is done by electron-builder's `extraResources` mechanism (see `electron-builder.json` below), not by the hook. The hook reads `context.electronPlatformName` (one of `'darwin' \| 'win32' \| 'linux'`), `context.arch` (one of `0 \| 1 \| 3` for ia32/x64/arm64 — the `Arch` enum from `app-builder-lib`), and resolves the target slice from those two values. Preserve existing `ensureBundledOpenClawRuntime` behaviour; OpenClaw is now sourced from `vendor/bundled-runtimes/openclaw/<ver>/<target>/` rather than the old `vendor/openclaw-runtime/<target>/`. |
+| `scripts/electron-builder-hooks.cjs` (new `afterPack` step, Windows branch only) | After electron-builder's `extraResources` copy has populated `appOutDir/.../resources/wesight-runtime/`, invoke `signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /f <pfx> /p <password>` for each of the 8 binaries in the Windows tar, gated on `process.env.WESIGHT_BUNDLED_RUNTIME_SIGN === '1'`. The signing step is performed in `afterPack` (which runs after the copy), not `beforePack` (which runs before). |
+| `electron-builder.json` | Add per-platform `extraResources` entries for `wesight-runtime/`. Each platform gets its own slice only: mac-arm64 → `vendor/bundled-runtimes/<name>/<ver>/darwin-arm64` for each of the 8 runtimes; linux-x64 → `linux-x64`; etc. Keep existing `SKILLs` and `tray` entries. **Windows**: do NOT add `wesight-runtime/` to the top-level `extraResources` list. Instead, extend the existing `build-tar/win-resources.tar` mechanism: the `beforePack` hook's Windows branch adds `wesight-runtime/<each of 8 runtimes>/<ver>/win-x64` to the tar source list via `packMultipleSources`, and the NSIS installer extracts the tar at install time. This preserves the perf reason for the existing tar (NSIS small-file extraction is slow on NTFS). The Windows extraResources `to: 'win-resources.tar'` entry is preserved verbatim. |
 | `scripts/notarize.js` | Add `codesign --force --deep --sign "Developer ID Application: <id>"` step before notarization so the 8 newly-embedded binaries inherit the app's signature and entitlements. |
 | `src/main/main.ts` | After `initApp()` boot, instantiate the resolver, call `tryGetAll()`, log a `console.warn` for any missing runtime, and expose the result to the renderer via `window.electron.runtime`. |
 | `src/main/libs/claudeSettings.ts` | `getClaudeCodePath()` prefers `runtimeResolver.tryGetPath('claudecode')`. Fall back to the existing `node_modules/@anthropic-ai/claude-agent-sdk/cli.js` path if the resolver returns `null` (developer builds). |
@@ -157,6 +161,7 @@ these binaries.
 | `eslint.config.js` | Add `no-restricted-syntax` rules that fail the lint when `process.resourcesPath` is concatenated with a runtime name in source, or when `vendor/bundled-runtimes` appears under `src/`. |
 | `vite.config.ts` | Add `import.meta.env.WESIGHT_BUNDLED_RUNTIMES_AVAILABLE = true` to the `define` block so the renderer can detect the bundled path without reading actual paths. |
 | `AGENTS.md` | Add a "Bundled Runtimes" section listing the 8 runtimes, their pinned versions, and the upgrade procedure. Add `setup-bundled-runtimes` to the build commands table. |
+| `.gitignore` | Add `vendor/bundled-runtimes/` (and keep the existing `vendor/openclaw-runtime/` ignore for the duration of the migration; remove the `vendor/hermes-runtime/` entry that is now stale). |
 | `scripts/openclaw-runtime-host.cjs` | Update to source from `vendor/bundled-runtimes/openclaw/<ver>/<target>/` rather than `vendor/openclaw-runtime/<target>/`. Keep all the existing plugin + gateway-bundle validation logic. |
 | `scripts/sync-openclaw-runtime-current.cjs` | Update to read from `vendor/bundled-runtimes/openclaw/<ver>/<target>/` and write the `current/` copy under the same parent. |
 | `scripts/bundle-openclaw-gateway.cjs` | Update the gateway-bundle output path to live under `vendor/bundled-runtimes/openclaw/<ver>/<target>/gateway-bundle.mjs` instead of `vendor/openclaw-runtime/<target>/`. |
@@ -168,19 +173,25 @@ these binaries.
 | `src/main/libs/openclawLocalExtensions.ts` (line 34-35) | Same as above: dev-mode fallback paths only. Packaged-build path (`process.resourcesPath/cfmind/extensions`) is unchanged. |
 | `src/main/libs/externalAgentCliInstaller.ts` (`openclaw` install target) | The `openclaw` install method's `npm install -g openclaw` path is preserved verbatim for dev mode. The resolver fast path is the same shape as for `claudecode` / `codex` / `hermes`; when `runtimeResolver.tryGetPath('openclaw')` returns a path, the method short-circuits with `installMethod: 'bundled'`. |
 
-#### 2.3 Components that are NOT changed
+#### 2.3 Components that are NOT changed (do not add resolver calls here)
 
-- `src/main/libs/externalAgentCliInstaller.ts`: the install scripts, the
-  install-method enum, and the IPC entry points are preserved verbatim.
-  Only the head of each install method is short-circuited by a resolver
-  check.
+- `src/main/skillManager.ts` (and the `buildSkillEnv()` function it
+  contains): SKILL subprocesses must NOT receive the resolver's PATH
+  override. Do not add `runtimeResolver` calls here.
+- `src/main/libs/mcpServerManager.ts`: the existing `server.command`
+  verbatim behavior is preserved. Do not add a resolver-driven default
+  for missing commands — this is a follow-up.
 - `src/main/services/cloudPlatformProviderService.ts`: does not spawn
   binaries, only performs HTTPS calls. No change.
 - `src/main/services/cloudAuth.ts`: same — HTTPS only.
 - Existing engine adapters (`yd_cowork`, `openclaw`, `hermes`): internal
   logic is unchanged. The resolver sits in front of them, not inside them.
-- Mac code signing identity, Windows Defender exclusion opt-in, NSIS
-  installer script: unchanged.
+- Mac code signing identity, NSIS installer script structure: unchanged.
+
+`src/main/libs/externalAgentCliInstaller.ts` is **modified**, not
+"not changed" — see §2.2. The install scripts and IPC entry points are
+preserved; the head of each install method is short-circuited by a
+resolver check.
 
 ### 3. Data Flow
 
@@ -396,6 +407,10 @@ mirror of the macOS `--deep` step:
   /f <pfx> /p <password>` is applied to each of the 8 binaries.
 - The signing cert is sourced from the same `CSC_LINK` / `CSC_KEY_PASSWORD`
   env vars that electron-builder uses for the main app.
+- The signing step runs in `afterPack` (NOT `beforePack`), because the
+  binaries must already be in `appOutDir/.../resources/wesight-runtime/`
+  for `signtool` to find them. The earlier `beforePack` step verifies
+  the source; `afterPack` re-signs the destination.
 - Without this re-sign, Windows SmartScreen warns (or blocks) end users on
   first launch for each unsigned binary.
 
