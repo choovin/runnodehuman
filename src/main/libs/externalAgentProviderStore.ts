@@ -17,12 +17,14 @@ import {
 import {
   mergeClaudeSettingsForWesightModel,
   mergeCodexConfigForWesightModel,
-  removeWesightManagedClaudeSettings,
-  writeJsonObjectWithBackupIfChanged,
-  writeTextFileWithBackupIfChanged,
 } from './externalAgentConfigSync';
 import { type CliAppType } from './externalAgentEnvironment';
 import { getClaudeCodeModelFromSettingsConfig } from './externalAgentLocalEnv';
+import {
+  removeWesightManagedClaudeSettings,
+  writeJsonObjectWithBackupIfChanged,
+  writeTextFileWithBackupIfChanged,
+} from './wesightConfigFile';
 import {
   DEFAULT_GROK_BUILD_MODEL,
   mergeGrokBuildDefaultModel,
