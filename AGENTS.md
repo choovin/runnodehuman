@@ -45,7 +45,7 @@ npm run openclaw:runtime:host   # current platform
 
 **Requirements**: Node.js >=24 <25. Windows builds require PortableGit (see README.md for setup).
 
-**OpenClaw env vars**: `OPENCLAW_SRC` (default `../openclaw`), `OPENCLAW_FORCE_BUILD=1` (force rebuild), `OPENCLAW_SKIP_ENSURE=1` (skip version checkout).
+**OpenClaw env vars** (legacy git-clone workflow — prefer `npm run dist:mac` which uses the bundled-runtimes fetch path and the `openclaw` npm package): `OPENCLAW_SRC` (default `../openclaw`), `OPENCLAW_FORCE_BUILD=1` (force rebuild), `OPENCLAW_SKIP_ENSURE=1` (skip version checkout). The legacy `openclaw:runtime:mac-arm64` script chain (which still defaults to git-cloning into `../openclaw/`) is kept for upstream dev compatibility but is not used by the standard `predist:mac` build pipeline.
 
 ## Architecture Overview
 

@@ -206,10 +206,10 @@ npm run electron:dev:openclaw
 npm run electron:dev:hermes
 ```
 
-Useful OpenClaw development variables:
+Useful OpenClaw development variables (legacy git-clone workflow; `npm run dist:mac` uses the bundled-runtimes fetch path and the `openclaw` npm package — no `OPENCLAW_SRC` needed):
 
 ```bash
-# Override OpenClaw source location
+# Override OpenClaw source location (legacy git-clone path)
 OPENCLAW_SRC=/path/to/openclaw npm run electron:dev:openclaw
 
 # Force OpenClaw runtime rebuild
