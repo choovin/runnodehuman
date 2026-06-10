@@ -259,4 +259,75 @@ describe('CloudPlatformProviderService', () => {
       expect(mockCloudAuth.fetchMemberAuthorized).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('getCached', () => {
+    test('returns null before init/sync', async () => {
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      expect(svc.getCached()).toBeNull();
+    });
+
+    test('returns the loaded record after init()', async () => {
+      const { CloudPlatformProviderStore } = await import('./cloudPlatformProviderStore');
+      const store = new CloudPlatformProviderStore(dbInstance);
+      await store.save({
+        baseUrl: 'https://cloud/v1', apiKey: 'cloud-key', lastSyncedAt: 12345,
+      });
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      await svc.init();
+      const cached = svc.getCached();
+      expect(cached).not.toBeNull();
+      expect(cached?.baseUrl).toBe('https://cloud/v1');
+      expect(cached?.apiKey).toBe('cloud-key');
+      expect(cached?.lastSyncedAt).toBe(12345);
+    });
+
+    test('returns the fresh record after sync()', async () => {
+      mockCloudAuth.fetchMemberAuthorized.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: 0, data: { baseUrl: 'https://fresh/v1', apiKey: 'fresh-key' },
+        }),
+      });
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      const r = await svc.sync();
+      expect(r.success).toBe(true);
+      const cached = svc.getCached();
+      expect(cached?.baseUrl).toBe('https://fresh/v1');
+      expect(cached?.apiKey).toBe('fresh-key');
+    });
+
+    test('updates cache after setOverride()', async () => {
+      const { CloudPlatformProviderStore } = await import('./cloudPlatformProviderStore');
+      const store = new CloudPlatformProviderStore(dbInstance);
+      await store.save({
+        baseUrl: 'https://cloud/v1', apiKey: 'cloud-key', lastSyncedAt: 1,
+      });
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      await svc.setOverride({ baseUrl: 'https://override/v1' });
+      const cached = svc.getCached();
+      expect(cached?.userOverride?.baseUrl).toBe('https://override/v1');
+    });
+
+    test('updates cache after resetDefault()', async () => {
+      const { CloudPlatformProviderStore } = await import('./cloudPlatformProviderStore');
+      const store = new CloudPlatformProviderStore(dbInstance);
+      await store.save({
+        baseUrl: 'https://cloud/v1', apiKey: 'cloud-key', lastSyncedAt: 1,
+        userOverride: { baseUrl: 'https://override/v1' },
+      });
+      mockCloudAuth.fetchMemberAuthorized.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ code: 0, data: { baseUrl: 'https://cloud/v1', apiKey: 'cloud-key' } }),
+      });
+      const { CloudPlatformProviderService } = await import('./cloudPlatformProviderService');
+      const svc = new CloudPlatformProviderService(dbInstance, mockCloudAuth as any, broadcaster);
+      await svc.resetDefault();
+      const cached = svc.getCached();
+      expect(cached?.userOverride).toBeUndefined();
+    });
+  });
 });

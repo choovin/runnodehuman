@@ -13,6 +13,7 @@ import {
 import type { SqliteStore } from '../sqliteStore';
 import { resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
 import type { CoworkApiConfig } from './coworkConfigStore';
+import { resolveApiConfigForEngine, tryApplyPlatformConfig } from './platformProviderResolver';
 import {
   DEFAULT_DEEPSEEK_TUI_MODEL,
   mergeDeepSeekTuiConfigForWesightModel,
@@ -871,10 +872,29 @@ export const syncDeepSeekTuiGlobalConfigFromWesightModel = (): void => {
   );
 };
 
-export const applyExternalAgentConfigForEngine = (
+export const applyExternalAgentConfigForEngine = async (
   engine: CoworkAgentEngineType,
   source: ExternalAgentConfigSourceType,
-): void => {
+): Promise<void> => {
+  // C spec, Task 5/6: pre-check the platform-provider resolver before
+  // falling through to the legacy per-engine write path. When the
+  // platform provider has a value AND the engine's config source is
+  // WesightModel, route to applyProviderToLive (which uses the
+  // wesightConfigFile.ts backup helpers).
+  if (source === ExternalAgentConfigSource.WesightModel) {
+    try {
+      const platformConfig = await resolveApiConfigForEngine({ engine });
+      if (platformConfig) {
+        const handled = tryApplyPlatformConfig(engine, platformConfig);
+        if (handled) {
+          return;
+        }
+      }
+    } catch (err) {
+      console.error(`[ExternalAgentConfigSync] platform-provider resolve failed for ${engine}, falling back:`, err);
+    }
+  }
+
   if (source === ExternalAgentConfigSource.LocalCli) {
     if (engine === CoworkAgentEngine.Codex) {
       syncCodexFromLocalCliConfig();

@@ -17,6 +17,8 @@ WeSight uses RunNode member auth (not URS OAuth). Two layered subsystems:
 - IPC: `registerCloudPlatformProviderHandlers` in `src/main/ipcHandlers/cloudAuth.ts`; preload exposure in `src/main/preload.ts`
 - Renderer: `src/renderer/components/Settings/CloudPlatformProviderSection.tsx` (effective 显示 + override inputs + 立即同步 + 恢复默认)
 
+**C — Engine init config**: each engine (Claude Code / Codex / OpenClaw / Hermes / OpenCode / QwenCode / DeepSeekTui) reads the RunNode platform provider's baseUrl + apiKey via `resolveApiConfigForEngine()`. Resolution order: preFetched > platform provider > user `app_config.providers` > null. When the platform provider has a value, the engine-config write routes through `applyPlatformConfigToLive` (uses `wesightConfigFile.ts` backup helpers). Re-applied on engine selection, on `CloudPlatformProviderChannel.UpdatedEvent`, and on 24h background sync. See `docs/superpowers/specs/2026-06-10-wesight-runnode-engine-init-config-design.md`. Code: `src/main/libs/platformProviderResolver.ts`, `src/main/libs/externalAgentConfigSync.ts` (pre-check), `src/main/libs/externalAgentProviderStore.ts` (`applyPlatformConfigToLive`), `src/main/main.ts` (wiring in `initApp` + updated event subscription).
+
 ## Build and Development Commands
 
 ```bash

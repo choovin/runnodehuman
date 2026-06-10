@@ -1,6 +1,6 @@
 # WeSight × RunNode Engine Init Config — Design ("C")
 
-> **Status:** Draft (pre-review) — written 2026-06-10
+> **Status:** Implemented (2026-06-10) — service layer (B spec) + C spec routes platform provider into 7 engines via `applyExternalAgentConfigForEngine` pre-check + `applyPlatformConfigToLive`
 
 ## Overview
 

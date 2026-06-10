@@ -4,6 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { CoworkAgentEngine } from '../../shared/cowork/constants';
+import type { CoworkApiType } from './coworkConfigStore';
+
 import {
   DEFAULT_DEEPSEEK_TUI_MODEL,
   listDeepSeekTuiModelProviders,
@@ -1455,5 +1458,136 @@ export class ExternalAgentProviderStore {
         provider.summary.model || DEFAULT_CODEX_MODEL,
       ),
     );
+  }
+
+  /**
+   * C spec, Task 5/6/7: write an engine config from a CoworkApiConfig
+   * directly, without going through the SQLite `external_agent_providers`
+   * table. Used by the platform-provider path: the B service has a
+   * baseUrl+apiKey, and we want to write it to the engine's config file
+   * via the same backup-aware write helpers as the legacy path.
+   *
+   * CC-switch writing is intentionally skipped — the platform provider IS
+   * the canonical source, no separate SQLite row to maintain. Engine-specific
+   * bodies mirror `applyProviderToLive` but take a CoworkApiConfig.
+   */
+  applyPlatformConfigToLive(
+    engine: CoworkAgentEngine,
+    config: { apiKey: string; baseURL: string; model: string; apiType?: CoworkApiType }
+  ): void {
+    if (engine === CoworkAgentEngine.ClaudeCode) {
+      const settingsPath = getClaudeSettingsPath();
+      const existingConfig = readJsonObject(settingsPath) ?? {};
+      writeJsonObjectWithBackupIfChanged(
+        settingsPath,
+        mergeClaudeSettingsForWesightModel(existingConfig, {
+          apiKey: config.apiKey,
+          baseURL: config.baseURL,
+          model: config.model || DEFAULT_CLAUDE_MODEL,
+          apiType: config.apiType ?? 'anthropic',
+        }),
+      );
+      return;
+    }
+    if (engine === CoworkAgentEngine.OpenCode) {
+      const existingConfig = readJsonObject(getOpenCodeConfigPath()) ?? {};
+      const selectedModel = config.model || DEFAULT_OPENCODE_LOCAL_MODEL;
+      const nextConfig = { ...existingConfig, model: selectedModel };
+      writeJsonFile(getOpenCodeConfigPath(), nextConfig);
+      return;
+    }
+    if (engine === CoworkAgentEngine.Hermes) {
+      const existingText = fs.existsSync(getHermesConfigPath())
+        ? fs.readFileSync(getHermesConfigPath(), 'utf8')
+        : '';
+      const existingConfig = parseHermesConfigText(existingText);
+      const selectedModel = config.model || DEFAULT_HERMES_LOCAL_MODEL;
+      const nextConfig = {
+        ...existingConfig,
+        model: {
+          ...getNestedRecord(existingConfig, 'model'),
+          default: selectedModel,
+          base_url: config.baseURL,
+        },
+      };
+      atomicWrite(getHermesConfigPath(), serializeHermesConfig(nextConfig));
+      return;
+    }
+    if (engine === CoworkAgentEngine.OpenClaw) {
+      const existingConfig = readJsonObject(getOpenClawConfigPath()) ?? {};
+      const selectedModel = config.model || DEFAULT_OPENCLAW_LOCAL_MODEL;
+      const agents = getNestedRecord(existingConfig, 'agents');
+      const defaults = getNestedRecord(agents, 'defaults');
+      const models = getNestedRecord(defaults, 'models');
+      const model = getNestedRecord(defaults, 'model');
+      const nextConfig = {
+        ...existingConfig,
+        agents: {
+          ...agents,
+          defaults: {
+            ...defaults,
+            models: {
+              ...models,
+              [selectedModel]: models[selectedModel] ?? {},
+            },
+            model: {
+              ...model,
+              primary: selectedModel,
+            },
+          },
+        },
+      };
+      writeJsonFile(getOpenClawConfigPath(), nextConfig);
+      return;
+    }
+    if (engine === CoworkAgentEngine.GrokBuild) {
+      const existingConfigText = fs.existsSync(getGrokBuildConfigPath())
+        ? fs.readFileSync(getGrokBuildConfigPath(), 'utf8')
+        : '';
+      const selectedModel = config.model || DEFAULT_GROK_LOCAL_MODEL;
+      atomicWrite(getGrokBuildConfigPath(), mergeGrokBuildDefaultModel(existingConfigText, selectedModel));
+      return;
+    }
+    if (engine === CoworkAgentEngine.QwenCode) {
+      const existingConfig = readJsonObject(getQwenCodeSettingsPath()) ?? {};
+      const selectedModel = config.model || DEFAULT_QWEN_CODE_LOCAL_MODEL;
+      const nextConfig = {
+        ...existingConfig,
+        model: {
+          ...getNestedRecord(existingConfig, 'model'),
+          name: selectedModel,
+        },
+      };
+      writeJsonFile(getQwenCodeSettingsPath(), nextConfig);
+      return;
+    }
+    if (engine === CoworkAgentEngine.DeepSeekTui) {
+      const existingText = fs.existsSync(getDeepSeekTuiConfigPath())
+        ? fs.readFileSync(getDeepSeekTuiConfigPath(), 'utf8')
+        : '';
+      const existingConfig = parseDeepSeekTuiConfigText(existingText);
+      const selectedModel = config.model || DEFAULT_DEEPSEEK_TUI_LOCAL_MODEL;
+      const nextConfig = {
+        ...existingConfig,
+        default_text_model: selectedModel,
+      };
+      atomicWrite(getDeepSeekTuiConfigPath(), serializeDeepSeekTuiConfig(nextConfig));
+      return;
+    }
+    if (engine === CoworkAgentEngine.Codex || engine === CoworkAgentEngine.CodexApp) {
+      const existingConfigText = fs.existsSync(getCodexConfigPath())
+        ? fs.readFileSync(getCodexConfigPath(), 'utf8')
+        : '';
+      writeTextFileWithBackupIfChanged(
+        getCodexConfigPath(),
+        mergeCodexConfigForWesightModel(
+          existingConfigText,
+          'wesight',
+          config.baseURL,
+          config.model || DEFAULT_CODEX_MODEL,
+        ),
+      );
+      return;
+    }
   }
 }

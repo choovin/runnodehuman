@@ -199,6 +199,14 @@ import { stripQuarantineIfNeeded } from './runtimeHealth';
 import { RuntimeResolver } from './runtimeResolver';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
+import { CloudPlatformProviderChannel } from '../shared/cloudPlatformProvider/constants';
+import { effective } from '../shared/cloudPlatformProvider/types';
+import {
+  ENGINE_MODEL_DEFAULT,
+  setApplyPlatformConfigFn,
+  setPlatformProviderResolver,
+} from './libs/platformProviderResolver';
+import { CoworkAgentEngine as CoworkAgentEngineType } from '../shared/cowork/constants';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -7454,6 +7462,61 @@ if (!gotTheLock) {
     );
     void platformProviderService.init();
     registerCloudPlatformProviderHandlers(platformProviderService, cloudBroadcaster);
+
+    // C spec: wire the B service into the engine-config resolver.
+    // engine-config write paths (Claude Code / Codex / OpenClaw / Hermes / OpenCode
+    // / QwenCode / DeepSeekTui) call resolveApiConfigForEngine(), which delegates
+    // to this setter. The resolver returns the platform-provider record's
+    // effective (override-applied) baseUrl + apiKey when present.
+    //
+    // Note: we leave `model` empty here. resolveApiConfigForEngine applies
+    // its own ENGINE_MODEL_DEFAULT table for known engines (Claude Code /
+    // Codex / CodexApp). For unknown engines, an empty model means the
+    // engine file gets written with no model — acceptable, since the
+    // engine's native config will set a default on the next CLI invocation.
+    setPlatformProviderResolver(async (engine: CoworkAgentEngineType) => {
+      const record = platformProviderService.getCached();
+      if (!record) return null;
+      const eff = effective(record);
+      if (!eff.baseUrl || !eff.apiKey) return null;
+      return {
+        apiKey: eff.apiKey,
+        baseURL: eff.baseUrl,
+        // Resolve per-engine default inline (avoids an import cycle
+        // between platformProviderResolver and the main module).
+        model: ENGINE_MODEL_DEFAULT[engine] ?? '',
+        apiType: 'openai',
+      };
+    });
+
+    // C spec, Task 5/6/7: when the platform-provider path produces a value,
+    // route the engine-config write through applyPlatformConfigToLive (which
+    // uses the wesightConfigFile.ts backup helpers). Returning true signals
+    // the dispatch function to skip the legacy per-engine write.
+    setApplyPlatformConfigFn((engine: CoworkAgentEngineType, config) => {
+      getExternalAgentProviderStore().applyPlatformConfigToLive(engine, config);
+      return true;
+    });
+
+    // C spec, Task 4: re-apply the current engine's config when the
+    // platform-provider record changes. Triggered on:
+    //   - user login (A spec onLoginSuccess -> B spec sync())
+    //   - user logout (no event, but B service emits UpdatedEvent on resetDefault)
+    //   - 24h background sync (B spec internal timer)
+    //   - user manual sync from Settings/CloudPlatformProviderSection
+    //
+    // The re-apply goes through the legacy dispatch function which checks
+    // the new resolver first (Task 5/6/7). If the engine is OpenClaw,
+    // applyExternalAgentConfigSourceForEngine no-ops (OpenClaw is synced
+    // by ensureOpenClawRunningForCowork before each task starts).
+    cloudBroadcaster.on(CloudPlatformProviderChannel.UpdatedEvent, () => {
+      try {
+        const engine = getCoworkStore().getConfig().agentEngine;
+        applyExternalAgentConfigSourceForEngine(engine);
+      } catch (err) {
+        console.error('[PlatformProvider] failed to re-apply engine config on update:', err);
+      }
+    });
 
     // Bundled runtime resolver (8 runtimes shipped inside the installer).
     const runtimeResolver = new RuntimeResolver(process.resourcesPath);
