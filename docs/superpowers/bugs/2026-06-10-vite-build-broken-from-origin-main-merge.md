@@ -2,7 +2,7 @@
 
 **Discovered:** 2026-06-10 (during B spec Phase 2 work — `vite build` failed when trying to verify B UI changes)
 **Severity:** **Critical** — blocks `predist:mac` build chain AND `npm run electron:dev` (compile:electron = `tsc` exits non-zero on the same errors)
-**Status:** Pre-existing; not introduced by B UI work; introduced by merge `d9d8d55` on 2026-06-10
+**Status:** **Fixed** 2026-06-10 (commits below). Pre-existing; not introduced by B UI work; introduced by merge `d9d8d55` on 2026-06-10.
 
 ## Symptoms
 
@@ -106,3 +106,20 @@ Implementation:
 Estimated effort: 1-2 hours including verification.
 
 **Note**: The SQLCipher-rename story in `fafdf77` has a side-effect: `better-sqlite3-multiple-ciphers` is a **fork** of `better-sqlite3` with SQLCipher compiled in (the standard `better-sqlite3` is plain SQLite3, no encryption). The merge reverting this means **the entire app loses SQLCipher encryption for cloud tokens, device records, cowork events, etc.** This is not just a build issue — it's a **security regression** in the merged main that the user (and any customer storing RunNode tokens) needs to know about.
+
+## Actual Fix Applied (2026-06-10)
+
+### Commits
+- `fix(build): restore SQLCipher fork + node-machine-id in package.json` — re-applies fafdf77 package.json changes
+- `fix(build): extract 3 missing config-file helpers to wesightConfigFile.ts` — surgical extraction of `removeWesightManagedClaudeSettings`, `writeJsonObjectWithBackupIfChanged`, `writeTextFileWithBackupIfChanged` from c3e09f4's `externalAgentConfigSync.ts` into a new sibling file (not Option A — full file replacement — to avoid bringing in c3e09f4's cowork pivot)
+- `fix(provider-store): import config-file helpers from new sibling file` — updates `externalAgentProviderStore.ts` imports
+- `docs(bug): mark vite build break fixed` — this doc
+
+### Verification
+- `npm install` re-installed correctly with `better-sqlite3-multiple-ciphers@12.10.0` + `node-machine-id@1.1.12`
+- `npx tsc --project electron-tsconfig.json --noEmit` → 0 errors
+- `npm run electron:dev` → vite dev server on 5175 + Electron main + window shown
+- `first_paint_ms: 6988ms`, `t2_ready_ms: 18193ms` — app fully interactive
+
+### Discovery: `app.quit()` due to single-instance lock
+While verifying, hit a confusing failure: the dev process exited with code 0 immediately. Investigated, found the WeSight main.ts has a `requestSingleInstanceLock()` check (line 3211). The user's previously-running 6.2 DMG instance was still alive (PID 21952, started 5:27PM), so the dev instance's `app.quit()` path was triggered. After `osascript -e 'tell application "WeSight" to quit'`, dev mode started cleanly. **Worth noting in the agent memory** as a WeSight-specific gotcha: always check for running WeSight instances before launching `npm run electron:dev`, otherwise the dev process exits silently.
