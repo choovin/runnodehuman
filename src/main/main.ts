@@ -199,6 +199,9 @@ import { stripQuarantineIfNeeded } from './runtimeHealth';
 import { RuntimeResolver } from './runtimeResolver';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
+import { effective } from '../shared/cloudPlatformProvider/types';
+import { ENGINE_MODEL_DEFAULT, setPlatformProviderResolver } from './libs/platformProviderResolver';
+import { CoworkAgentEngine as CoworkAgentEngineType } from '../shared/cowork/constants';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -7454,6 +7457,32 @@ if (!gotTheLock) {
     );
     void platformProviderService.init();
     registerCloudPlatformProviderHandlers(platformProviderService, cloudBroadcaster);
+
+    // C spec: wire the B service into the engine-config resolver.
+    // engine-config write paths (Claude Code / Codex / OpenClaw / Hermes / OpenCode
+    // / QwenCode / DeepSeekTui) call resolveApiConfigForEngine(), which delegates
+    // to this setter. The resolver returns the platform-provider record's
+    // effective (override-applied) baseUrl + apiKey when present.
+    //
+    // Note: we leave `model` empty here. resolveApiConfigForEngine applies
+    // its own ENGINE_MODEL_DEFAULT table for known engines (Claude Code /
+    // Codex / CodexApp). For unknown engines, an empty model means the
+    // engine file gets written with no model — acceptable, since the
+    // engine's native config will set a default on the next CLI invocation.
+    setPlatformProviderResolver(async (engine: CoworkAgentEngineType) => {
+      const record = platformProviderService.getCached();
+      if (!record) return null;
+      const eff = effective(record);
+      if (!eff.baseUrl || !eff.apiKey) return null;
+      return {
+        apiKey: eff.apiKey,
+        baseURL: eff.baseUrl,
+        // Resolve per-engine default inline (avoids an import cycle
+        // between platformProviderResolver and the main module).
+        model: ENGINE_MODEL_DEFAULT[engine] ?? '',
+        apiType: 'openai',
+      };
+    });
 
     // Bundled runtime resolver (8 runtimes shipped inside the installer).
     const runtimeResolver = new RuntimeResolver(process.resourcesPath);

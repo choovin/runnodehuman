@@ -101,10 +101,12 @@ describe('platformProviderResolver', () => {
         apiType: 'openai',
       }));
       mockedResolveRawApiConfig.mockResolvedValue({
-        apiKey: 'user-key',
-        baseURL: 'https://user/v1',
-        model: 'user-model',
-        apiType: 'anthropic',
+        config: {
+          apiKey: 'user-key',
+          baseURL: 'https://user/v1',
+          model: 'user-model',
+          apiType: 'anthropic',
+        },
       });
       const cfg = await resolveApiConfigForEngine({
         engine: CoworkAgentEngine.ClaudeCode,
@@ -121,9 +123,11 @@ describe('platformProviderResolver', () => {
     test('falls back to user config when platform-provider returns null', async () => {
       setPlatformProviderResolver(async () => null);
       mockedResolveRawApiConfig.mockResolvedValue({
-        apiKey: 'user-key',
-        baseURL: 'https://user/v1',
-        model: 'user-model',
+        config: {
+          apiKey: 'user-key',
+          baseURL: 'https://user/v1',
+          model: 'user-model',
+        },
       });
       const cfg = await resolveApiConfigForEngine({
         engine: CoworkAgentEngine.ClaudeCode,
@@ -133,7 +137,7 @@ describe('platformProviderResolver', () => {
 
     test('returns null when nothing has a value', async () => {
       setPlatformProviderResolver(async () => null);
-      mockedResolveRawApiConfig.mockResolvedValue(null);
+      mockedResolveRawApiConfig.mockResolvedValue({ config: null });
       const cfg = await resolveApiConfigForEngine({
         engine: CoworkAgentEngine.ClaudeCode,
       });
@@ -141,7 +145,7 @@ describe('platformProviderResolver', () => {
     });
 
     test('returns null when no resolver is set and user config is null', async () => {
-      mockedResolveRawApiConfig.mockResolvedValue(null);
+      mockedResolveRawApiConfig.mockResolvedValue({ config: null });
       const cfg = await resolveApiConfigForEngine({
         engine: CoworkAgentEngine.ClaudeCode,
       });
@@ -153,9 +157,11 @@ describe('platformProviderResolver', () => {
         throw new Error('boom');
       });
       mockedResolveRawApiConfig.mockResolvedValue({
-        apiKey: 'user-key',
-        baseURL: 'https://user/v1',
-        model: 'user-model',
+        config: {
+          apiKey: 'user-key',
+          baseURL: 'https://user/v1',
+          model: 'user-model',
+        },
       });
       const cfg = await resolveApiConfigForEngine({
         engine: CoworkAgentEngine.ClaudeCode,

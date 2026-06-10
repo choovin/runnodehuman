@@ -34,8 +34,12 @@ import { resolveRawApiConfig } from './claudeSettings';
  *
  * Engines without a default here (OpenClaw, Hermes, OpenCode, QwenCode,
  * DeepSeekTui) defer to the engine's native default.
+ *
+ * Exported so main.ts can apply the same default in the wired setter
+ * (which constructs a CoworkApiConfig and returns it via the resolver
+ * function — no need for the resolver to also override model).
  */
-const ENGINE_MODEL_DEFAULT: Partial<Record<CoworkAgentEngine, string>> = {
+export const ENGINE_MODEL_DEFAULT: Partial<Record<CoworkAgentEngine, string>> = {
   [CoworkAgentEngine.ClaudeCode]: 'claude-sonnet-4-5',
   [CoworkAgentEngine.Codex]: 'gpt-5.4',
   [CoworkAgentEngine.CodexApp]: 'gpt-5.4',
@@ -108,7 +112,8 @@ export async function resolveApiConfigForEngine(
 
   // Step 3: user app_config.providers (existing path, no change)
   try {
-    return await resolveRawApiConfig();
+    const resolution = await resolveRawApiConfig();
+    return resolution?.config ?? null;
   } catch (e) {
     console.error('[PlatformProviderResolver] resolveRawApiConfig threw:', e);
     return null;
