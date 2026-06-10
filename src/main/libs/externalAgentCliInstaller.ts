@@ -1,8 +1,25 @@
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import os from 'os';
 
+import { RuntimeName } from '../../shared/runtime/constants';
+import type { RuntimeResolver } from '../runtimeResolver';
 import type { CliAppType, ExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
+
+let runtimeResolver: RuntimeResolver | null = null;
+export function setRuntimeResolver(r: RuntimeResolver | null): void {
+  runtimeResolver = r;
+}
+
+function appTypeToRuntimeName(appType: CliAppType): RuntimeName | null {
+  switch (appType) {
+    case 'claude': return RuntimeName.ClaudeCode;
+    case 'codex': return RuntimeName.Codex;
+    case 'hermes': return RuntimeName.Hermes;
+    case 'openclaw': return RuntimeName.OpenClaw;
+    default: return null;
+  }
+}
 import {
   getExternalAgentEnvironmentSnapshot,
   getPlaceholderExternalAgentEnvironmentSnapshot,
@@ -290,6 +307,44 @@ const buildInstallScript = (target: InstallTarget): string => {
 export class ExternalAgentCliInstaller extends EventEmitter {
   private readonly activeInstalls = new Map<CliAppType, Promise<ExternalAgentCliInstallResult>>();
 
+  private async tryBundledPath(appType: CliAppType): Promise<ExternalAgentCliInstallResult | null> {
+    const resolverName = appTypeToRuntimeName(appType);
+    if (!resolverName || !runtimeResolver) return null;
+    const binaryPath = runtimeResolver.tryGetPath(resolverName);
+    if (!binaryPath) return null;
+
+    this.emitProgress({
+      appType,
+      phase: 'starting',
+      message: 'Detected bundled runtime',
+    });
+    this.emitProgress({
+      appType,
+      phase: 'verifying',
+      message: binaryPath,
+    });
+    let version: string | null = null;
+    try {
+      const out = spawnSync(binaryPath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
+      version = (out.stdout || out.stderr || '').trim().split('\n')[0] || null;
+    } catch {
+      // ignore — version is informational
+    }
+    this.emitProgress({
+      appType,
+      phase: 'success',
+      message: 'Bundled runtime ready',
+    });
+    return {
+      success: true,
+      appType,
+      installMethod: 'bundled',
+      command: appType,
+      binaryPath,
+      version,
+    };
+  }
+
   install(appType: CliAppType): Promise<ExternalAgentCliInstallResult> {
     const activeInstall = this.activeInstalls.get(appType);
     if (activeInstall) {
@@ -316,6 +371,14 @@ export class ExternalAgentCliInstaller extends EventEmitter {
     const target = INSTALL_TARGETS[appType];
     const isWindows = process.platform === 'win32';
     const isMacOS = process.platform === 'darwin';
+
+    // Bundled runtime fast path: if RuntimeResolver can find the binary,
+    // short-circuit with success without spawning an install script. This
+    // applies to packaged builds (where all 8 runtimes are bundled) and
+    // to any install of an in-scope engine (claudecode, codex, hermes, openclaw).
+    const bundled = await this.tryBundledPath(appType);
+    if (bundled) return bundled;
+
     if (!isWindows && !isMacOS) {
       const message = 'Automatic CLI installation currently supports macOS and Windows only.';
       this.emitProgress({

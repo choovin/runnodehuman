@@ -13,9 +13,9 @@ export class CloudUserDeviceStore {
 
   async save(record: CloudDeviceRecord): Promise<void> {
     const stmt = this.db.prepare(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'
+      'INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)'
     );
-    stmt.run(DEVICE_KEY, JSON.stringify(record));
+    stmt.run(DEVICE_KEY, JSON.stringify(record), Date.now());
   }
 
   async load(): Promise<CloudDeviceRecord | null> {

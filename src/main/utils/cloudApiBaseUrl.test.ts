@@ -20,8 +20,14 @@ describe('getCloudApiBaseUrl', () => {
     expect(getCloudApiBaseUrl()).toBe('https://env.example.com');
   });
 
-  test('throws when neither set', async () => {
+  test('falls back to the canonical RunNode production URL when nothing is set', async () => {
     const { getCloudApiBaseUrl } = await import('./cloudApiBaseUrl');
-    expect(() => getCloudApiBaseUrl()).toThrow(/RunNode base URL/);
+    expect(getCloudApiBaseUrl()).toBe('https://www.runnode.ai');
+  });
+
+  test('strips trailing slashes from fallback', async () => {
+    process.env.VITE_CLOUD_API_BASE_URL = 'https://env.example.com/';
+    const { getCloudApiBaseUrl } = await import('./cloudApiBaseUrl');
+    expect(getCloudApiBaseUrl()).toBe('https://env.example.com');
   });
 });

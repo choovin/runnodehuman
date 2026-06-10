@@ -1,3 +1,4 @@
+import type { CloudPlatformProviderRecord } from '@shared/cloudPlatformProvider/types';
 import type {
   ClaudeCodePermissionMode,
   CoworkAgentEngine,
@@ -569,6 +570,15 @@ export interface WechatPollResult {
   state?: string;
 }
 
+export interface CloudPlatformProviderApi {
+  get: () => Promise<CloudPlatformProviderRecord | null>;
+  sync: () => Promise<{ success: boolean; error?: string; record?: CloudPlatformProviderRecord }>;
+  setOverride: (payload: { baseUrl?: string; apiKey?: string }) => Promise<{ success: boolean; error?: string; record?: CloudPlatformProviderRecord }>;
+  resetDefault: () => Promise<{ success: boolean; error?: string; record?: CloudPlatformProviderRecord }>;
+  onUpdate: (handler: (record: CloudPlatformProviderRecord) => void) => () => void;
+  onSyncFailed: (handler: (payload: { error: string }) => void) => () => void;
+}
+
 interface IElectronAPI {
   platform: string;
   arch: string;
@@ -999,6 +1009,7 @@ interface IElectronAPI {
     onLoggedOut: (handler: () => void) => () => void;
     onLoginSuccess: (handler: (payload: { user: CloudUserInfo }) => void) => () => void;
   };
+  cloudPlatformProvider: CloudPlatformProviderApi;
   probeCloudBaseUrl: () => Promise<{ ok: boolean; error?: string }>;
   setCloudApiBaseUrl: (url: string | null) => Promise<{ success: boolean }>;
   feishu: {

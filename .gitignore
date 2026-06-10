@@ -8,6 +8,8 @@ dist
 dist-electron
 .DS_Store
 .env 
+.env.production.local
+.env.development.local
 .claude/
 __pycache__/
 .codebuddy/
@@ -16,6 +18,7 @@ __pycache__/
 vendor/openclaw-runtime/
 vendor/openclaw-plugins/
 vendor/hermes-runtime/
+vendor/bundled-runtimes/
 
 # Tar archives generated during Windows packaging
 build-tar/

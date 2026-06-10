@@ -19,6 +19,7 @@ import {
   mergeCodexConfigForWesightModel,
 } from './externalAgentConfigSync';
 import { type CliAppType } from './externalAgentEnvironment';
+import { getClaudeCodeModelFromSettingsConfig } from './externalAgentLocalEnv';
 import {
   DEFAULT_GROK_BUILD_MODEL,
   mergeGrokBuildDefaultModel,
@@ -367,8 +368,7 @@ const summarizeProvider = (
     return {
       apiKey: getString(env.ANTHROPIC_AUTH_TOKEN) || getString(env.ANTHROPIC_API_KEY),
       baseUrl: getString(env.ANTHROPIC_BASE_URL),
-      model: getString(env.ANTHROPIC_MODEL)
-        || getString(env.ANTHROPIC_DEFAULT_SONNET_MODEL),
+      model: getClaudeCodeModelFromSettingsConfig(settingsConfig),
     };
   }
 

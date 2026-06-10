@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 
@@ -9,11 +9,21 @@ import renderer from 'vite-plugin-electron-renderer';
 const devPort = 5175;
 const katexVersion = process.env.npm_package_dependencies_katex?.replace(/^[~^]/, '') || '0.16.0';
 
+// Read environment files explicitly via loadEnv so the production build picks
+// up `.env.production` (and `.env.production.local`) without relying on the
+// ambient `process.env` being populated by the developer's shell. This
+// mirrors the pattern used by RClaw's vite.config.ts and ensures that
+// `VITE_CLOUD_API_BASE_URL` (and any future VITE_* values) is baked into the
+// renderer/main bundles at build time, not only in dev mode.
+const env = loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), '');
+
 export default defineConfig({
   define: {
     // KaTeX ESM bundle references this compile-time constant.
     __VERSION__: JSON.stringify(katexVersion),
-    'import.meta.env.VITE_CLOUD_API_BASE_URL': JSON.stringify(process.env.VITE_CLOUD_API_BASE_URL || ''),
+    'import.meta.env.VITE_CLOUD_API_BASE_URL': JSON.stringify(
+      env.VITE_CLOUD_API_BASE_URL ?? process.env.VITE_CLOUD_API_BASE_URL ?? ''
+    ),
   },
   plugins: [
     react(),

@@ -9,7 +9,7 @@ import { PlatformRegistry } from '../../shared/platform';
 import { OpenClawApi as OpenClawApiConst,OpenClawProviderId, ProviderName } from '../../shared/providers';
 import type { Agent,CoworkConfig, CoworkExecutionMode } from '../coworkStore';
 import type { DiscordOpenClawConfig, IMSettings,TelegramOpenClawConfig } from '../im/types';
-import type { DingTalkInstanceConfig, DingTalkOpenClawConfig, FeishuInstanceConfig, NeteaseBeeChanConfig,NimConfig, PopoOpenClawConfig, QQInstanceConfig, WecomOpenClawConfig, WeixinOpenClawConfig } from '../im/types';
+import type { DingTalkInstanceConfig, FeishuInstanceConfig, NeteaseBeeChanConfig,NimConfig, PopoOpenClawConfig, QQInstanceConfig, WecomOpenClawConfig, WeixinOpenClawConfig } from '../im/types';
 import { getAllServerModelMetadata,resolveAllEnabledProviderConfigs, resolveAllProviderApiKeys, resolveRawApiConfig } from './claudeSettings';
 import { getCoworkOpenAICompatProxyBaseURL } from './coworkOpenAICompatProxy';
 import type { McpToolManifestEntry } from './mcpServerManager';
@@ -172,6 +172,42 @@ const stripManagedAgentsMarkers = (value: string): string => {
   return ALL_MANAGED_AGENTS_MARKERS.reduce((next, marker) => next.replaceAll(marker, ''), value);
 };
 
+const normalizeEnvSuffix = (value: string): string =>
+  value.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+
+const API_KEY_ENV_SUFFIX_ALIASES: Record<string, string[]> = {
+  ZHIPU: ['ZAI'],
+  ZAI: ['ZHIPU'],
+  GEMINI: ['GOOGLE'],
+  GOOGLE: ['GEMINI'],
+  WESIGHT_SERVER: ['SERVER'],
+  SERVER: ['WESIGHT_SERVER'],
+  GITHUB_COPILOT: ['WESIGHT_COPILOT'],
+  WESIGHT_COPILOT: ['GITHUB_COPILOT'],
+};
+
+const setApiKeyEnv = (env: Record<string, string>, suffix: string, apiKey: string): void => {
+  const normalizedSuffix = normalizeEnvSuffix(suffix);
+  if (!normalizedSuffix) return;
+  env[`WESIGHT_APIKEY_${normalizedSuffix}`] = apiKey;
+  env[`LOBSTER_APIKEY_${normalizedSuffix}`] = apiKey;
+  for (const alias of API_KEY_ENV_SUFFIX_ALIASES[normalizedSuffix] ?? []) {
+    env[`WESIGHT_APIKEY_${alias}`] = apiKey;
+    env[`LOBSTER_APIKEY_${alias}`] = apiKey;
+  }
+};
+
+const readApiKeyEnvAlias = (env: Record<string, string>, envName: string): string | null => {
+  const match = envName.match(/^(WESIGHT|LOBSTER)_APIKEY_(.+)$/);
+  if (!match) return null;
+  const [, prefix, suffix] = match;
+  for (const alias of API_KEY_ENV_SUFFIX_ALIASES[suffix] ?? []) {
+    const value = env[`${prefix}_APIKEY_${alias}`] || process.env[`${prefix}_APIKEY_${alias}`];
+    if (value?.trim()) return value;
+  }
+  return null;
+};
+
 const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
   '## Web Search',
   '',
@@ -309,10 +345,27 @@ const stripTemplateFrontMatter = (content: string): string => {
 const resolveBundledOpenClawAgentsTemplatePaths = (): string[] => {
   const runtimeRoots = app.isPackaged === true
     ? [path.join(process.resourcesPath, 'cfmind')]
-    : [
-        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
-      ];
+    : (() => {
+        const pkgPath = path.join(app.getAppPath(), 'package.json');
+        let openclawVersion = '';
+        try {
+          const pkg = require(pkgPath);
+          openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
+        } catch {
+          // ignore
+        }
+        if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+          return [
+            path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
+            path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
+          ];
+        }
+        const bundledBase = path.join('vendor', 'bundled-runtimes', 'openclaw', openclawVersion, 'current');
+        return [
+          path.join(app.getAppPath(), bundledBase),
+          path.join(process.cwd(), bundledBase),
+        ];
+      })();
 
   return runtimeRoots.map((runtimeRoot) => path.join(
     runtimeRoot,
@@ -1625,44 +1678,17 @@ export class OpenClawConfigSync {
    * placeholders for these values so that no plaintext secrets are stored on disk.
    */
   collectSecretEnvVars(): Record<string, string> {
+    const env: Record<string, string> = {};
+    this.collectProviderApiKeyEnvVars(env);
+    this.collectPersistedApiKeyPlaceholderEnvVars(env);
+
     if (this.getCoworkConfig().openclawConfigSource === ExternalAgentConfigSource.LocalCli) {
-      const env: Record<string, string> = {};
       if (this.shouldWriteFeishuChannel()) {
         this.collectFeishuSecretEnvVars(env);
       }
       return env;
     }
-    const env: Record<string, string> = {};
 
-    // Provider API Keys — one per configured provider so switching models
-    // never changes env vars and avoids gateway process restarts.
-    const allApiKeys = resolveAllProviderApiKeys();
-    for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
-      env[`WESIGHT_APIKEY_${envSuffix}`] = apiKey;
-      env[`LOBSTER_APIKEY_${envSuffix}`] = apiKey;
-    }
-    for (const provider of resolveAllEnabledProviderConfigs()) {
-      const envSuffix = provider.providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-      const envName = `WESIGHT_APIKEY_${envSuffix}`;
-      if (!env[envName]) {
-        env[envName] = provider.apiKey?.trim() || 'sk-wesight-local';
-      }
-      const legacyEnvName = `LOBSTER_APIKEY_${envSuffix}`;
-      if (!env[legacyEnvName]) {
-        env[legacyEnvName] = env[envName];
-      }
-    }
-    try {
-      const persistedConfig = fs.readFileSync(this.engineManager.getConfigPath(), 'utf8');
-      for (const match of persistedConfig.matchAll(API_KEY_PLACEHOLDER_PATTERN)) {
-        const envName = match[1];
-        if (envName && !env[envName]) {
-          env[envName] = 'sk-wesight-local';
-        }
-      }
-    } catch {
-      // The config may not exist yet during first-run preparation.
-    }
     // Legacy provider fallback keeps stale OpenClaw configs from failing
     // with MissingEnvVarError after the WeSight rename.
     env.LOBSTER_PROVIDER_API_KEY = 'legacy-unused';
@@ -1744,6 +1770,42 @@ export class OpenClawConfigSync {
     }
 
     return env;
+  }
+
+  private collectProviderApiKeyEnvVars(env: Record<string, string>): void {
+    // Provider API Keys — one per configured provider so switching models
+    // never changes env vars and avoids gateway process restarts.
+    const allApiKeys = resolveAllProviderApiKeys();
+    for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
+      setApiKeyEnv(env, envSuffix, apiKey);
+    }
+    for (const provider of resolveAllEnabledProviderConfigs()) {
+      const envSuffix = normalizeEnvSuffix(provider.providerName);
+      const envName = `WESIGHT_APIKEY_${envSuffix}`;
+      if (!env[envName]) {
+        setApiKeyEnv(env, envSuffix, provider.apiKey?.trim() || 'sk-wesight-local');
+      }
+      const legacyEnvName = `LOBSTER_APIKEY_${envSuffix}`;
+      if (!env[legacyEnvName]) {
+        env[legacyEnvName] = env[envName];
+      }
+    }
+  }
+
+  private collectPersistedApiKeyPlaceholderEnvVars(env: Record<string, string>): void {
+    try {
+      const persistedConfig = fs.readFileSync(this.engineManager.getConfigPath(), 'utf8');
+      for (const match of persistedConfig.matchAll(API_KEY_PLACEHOLDER_PATTERN)) {
+        const envName = match[1];
+        if (envName && !env[envName]) {
+          const processValue = process.env[envName]?.trim();
+          const aliasValue = readApiKeyEnvAlias(env, envName);
+          env[envName] = processValue || aliasValue || 'sk-wesight-local';
+        }
+      }
+    } catch {
+      // The config may not exist yet during first-run preparation.
+    }
   }
 
   /**
@@ -2215,8 +2277,6 @@ export class OpenClawConfigSync {
    * user sets up a model in the UI.
    */
   private writeMinimalConfig(configPath: string, _reason: string): OpenClawConfigSyncResult {
-    const preinstalledPluginIds = readPreinstalledPluginIds().filter((id) => isBundledPluginAvailable(id));
-
     const minimalConfig: Record<string, unknown> = {
       gateway: {
         mode: 'local',

@@ -176,8 +176,24 @@ function cleanDir(dirPath, stats) {
 // ─── Main ───
 
 function main() {
+  // Resolve the runtime root. Order:
+  //   1. CLI arg (used by the openclaw:runtime:<target> chain)
+  //   2. OPENCLAW_RUNTIME_DIR env var
+  //   3. Bundled-runtimes namespace (post-Task-16 default)
+  //   4. Legacy vendor/openclaw-runtime/current
+  const fs = require('fs');
+  const rootDir = path.resolve(__dirname, '..');
+  let bundledDefault = null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+    const v = pkg.runtimeManifest?.openclaw?.version;
+    if (v) bundledDefault = path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', v, 'current');
+  } catch {}
+  const legacyDefault = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
   const runtimeRoot = process.argv[2]
-    || path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current');
+    || process.env.OPENCLAW_RUNTIME_DIR
+    || (bundledDefault && fs.existsSync(bundledDefault) ? bundledDefault : null)
+    || legacyDefault;
 
   if (!fs.existsSync(runtimeRoot)) {
     console.error(`[prune-openclaw-runtime] Runtime root not found: ${runtimeRoot}`);

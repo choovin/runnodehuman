@@ -26,7 +26,7 @@ describe('CloudUserDeviceService', () => {
     dbInstance.pragma(`cipher='sqlcipher'`);
     dbInstance.pragma(`key="x'${'00'.repeat(32)}'"`);
     dbInstance.exec(`
-      CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
     `);
     mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ code: 0 }) });
     (globalThis as any).fetch = mockFetch;

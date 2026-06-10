@@ -1,4 +1,6 @@
 const { notarize } = require('@electron/notarize');
+const { execFileSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 // 加载 .env 文件
@@ -31,6 +33,18 @@ exports.default = async function notarizing(context) {
   console.log(`   应用路径: ${appPath}`);
   console.log(`   Apple ID: ${process.env.APPLE_ID}`);
   console.log(`   Team ID: ${process.env.APPLE_TEAM_ID}`);
+
+  // Re-sign the entire bundle with --deep so the 8 newly-embedded bundled
+  // runtimes (node, python, git, gh, claudecode, codex, hermes, openclaw)
+  // inherit the app's signature and entitlements. Without --deep, each
+  // embedded binary would still carry the upstream publisher's signature
+  // (Node.js Foundation, Python Software Foundation, GitHub, etc.) and
+  // could fail Gatekeeper validation.
+  const identity = process.env.APP_IDENTITY || `Developer ID Application: ${process.env.APPLE_TEAM_ID}`;
+  if (fs.existsSync(appPath)) {
+    console.log(`🔏 Re-signing bundle with codesign --deep --sign "${identity}"`);
+    execFileSync('codesign', ['--force', '--deep', '--sign', identity, appPath], { stdio: 'inherit' });
+  }
 
   try {
     await notarize({

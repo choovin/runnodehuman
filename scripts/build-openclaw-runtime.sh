@@ -11,7 +11,26 @@ TARGET_ID="${1:-mac-arm64}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ELECTRON_ROOT="${ELECTRON_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 OPENCLAW_SRC="${OPENCLAW_SRC:-$ELECTRON_ROOT/../openclaw}"
-OUT_DIR="${OUT_DIR:-$ELECTRON_ROOT/vendor/openclaw-runtime/$TARGET_ID}"
+
+# Resolve the runtime version. Prefer runtimeManifest.openclaw.version
+# (the new canonical source); fall back to package.json:openclaw.version
+# for the transition window.
+OPENCLAW_RUNTIME_VERSION="$(node - "$ELECTRON_ROOT" <<'READVER'
+try {
+  const pkg = require(process.argv[2] + '/package.json');
+  console.log(
+    (pkg.runtimeManifest && pkg.runtimeManifest.openclaw && pkg.runtimeManifest.openclaw.version)
+    || (pkg.openclaw && pkg.openclaw.version)
+    || ''
+  );
+} catch {}
+READVER
+)"
+if [[ -z "$OPENCLAW_RUNTIME_VERSION" ]]; then
+  echo "Could not resolve OpenClaw runtime version from package.json:runtimeManifest.openclaw.version or package.json:openclaw.version" >&2
+  exit 1
+fi
+OUT_DIR="${OUT_DIR:-$ELECTRON_ROOT/vendor/bundled-runtimes/openclaw/$OPENCLAW_RUNTIME_VERSION/$TARGET_ID}"
 
 TARGET_PLATFORM="${TARGET_ID%%-*}"
 TARGET_ARCH="${TARGET_ID#*-}"

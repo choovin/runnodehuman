@@ -14,7 +14,13 @@ if (!targetId) {
 }
 
 const rootDir = path.resolve(__dirname, '..');
-const runtimeBaseDir = path.join(rootDir, 'vendor', 'openclaw-runtime');
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+const openclawVersion = (pkg.runtimeManifest && pkg.runtimeManifest.openclaw && pkg.runtimeManifest.openclaw.version) || '';
+if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+  fail('package.json:runtimeManifest.openclaw.version is not set. Run `npm run setup-bundled-runtimes` first.');
+}
+
+const runtimeBaseDir = path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', openclawVersion);
 const targetRuntimeDir = path.join(runtimeBaseDir, targetId);
 const currentRuntimeDir = path.join(runtimeBaseDir, 'current');
 
@@ -40,7 +46,7 @@ try {
 const linkType = process.platform === 'win32' ? 'junction' : 'dir';
 fs.symlinkSync(targetRuntimeDir, currentRuntimeDir, linkType);
 
-console.log(`[sync-openclaw-runtime-current] Synced ${targetId} -> vendor/openclaw-runtime/current`);
+console.log(`[sync-openclaw-runtime-current] Synced ${targetId} -> vendor/bundled-runtimes/openclaw/${openclawVersion}/current`);
 
 // Extract entry files from gateway.asar if bare files are missing.
 // On Windows, Electron's utilityProcess.fork() cannot load ESM from inside .asar archives,

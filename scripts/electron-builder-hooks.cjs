@@ -68,7 +68,12 @@ function getOpenClawRuntimeBuildHint(targetId) {
 }
 
 function syncCurrentOpenClawRuntimeForTarget(context) {
-  const runtimeBase = path.join(__dirname, '..', 'vendor', 'openclaw-runtime');
+  const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+  const openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
+  if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+    throw new Error('[electron-builder-hooks] package.json:runtimeManifest.openclaw.version is not set. Run `npm run setup-bundled-runtimes` first.');
+  }
+  const runtimeBase = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', 'openclaw', openclawVersion);
   const currentRoot = path.join(runtimeBase, 'current');
   const targetId = resolveOpenClawRuntimeTargetId(context);
 
@@ -487,6 +492,11 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  // Verify the 8 bundled runtimes are present for the current target slice.
+  // Versions are read directly from package.json:runtimeManifest (not env
+  // vars) so the hook works regardless of how electron-builder was invoked.
+  verifyBundledRuntimes(context);
+
   const packageOpenClawRuntime = shouldPackageOpenClawRuntime();
   if (packageOpenClawRuntime) {
     ensureBundledOpenClawRuntime(context);
@@ -529,10 +539,32 @@ async function beforePack(context) {
         prefix: 'python-win',
       },
     ];
+
+    // Include all 8 bundled runtimes (except openclaw, which is added
+    // separately below as the cfmind/ source). Each runtime is read from
+    // vendor/bundled-runtimes/<name>/<version>/win-x64/ and unpacked into
+    // wesight-runtime/<name>/<version>/win-x64/ at install time.
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+    const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+    for (const name of runtimeNames) {
+      if (name === 'openclaw') continue; // handled separately as cfmind
+      const version = pkg.runtimeManifest?.[name]?.version;
+      if (!version) continue;
+      const src = path.join(__dirname, '..', 'vendor', 'bundled-runtimes', name, version, 'win-x64');
+      if (existsSync(src)) {
+        sources.push({
+          label: `Bundled ${name} runtime`,
+          dir: src,
+          prefix: path.join('wesight-runtime', name, version, 'win-x64'),
+        });
+      }
+    }
     if (packageOpenClawRuntime) {
+      const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+      const openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
       sources.unshift({
         label: 'OpenClaw runtime',
-        dir: path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+        dir: path.join(__dirname, '..', 'vendor', 'bundled-runtimes', 'openclaw', openclawVersion, 'current'),
         prefix: 'cfmind',
       });
     }
@@ -571,6 +603,99 @@ async function afterPack(context) {
       console.warn(`[electron-builder-hooks] App not found at ${appPath}, skipping icon fix`);
     }
   }
+
+  if (isWindowsTarget(context) && process.env.WESIGHT_BUNDLED_RUNTIME_SIGN === '1') {
+    signBundledRuntimesWindows(context);
+  }
+}
+
+function signBundledRuntimesWindows(context) {
+  // Sign each of the 8 Windows runtimes with WeSight's Authenticode
+  // certificate. Runs in afterPack because the binaries must already be in
+  // appOutDir (electron-builder's extraResources copy / Windows tar has
+  // already populated them).
+  const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+  const targetSlice = 'win-x64'; // currently only win-x64 is supported
+  const runtimeNames = ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw'];
+  const binaryRel = {
+    node: 'bin/node.exe',
+    python: 'python.exe',
+    git: 'bin/git.exe',
+    gh: 'bin/gh.exe',
+    claudecode: 'bin/claude.cmd',
+    codex: 'bin/codex.cmd',
+    hermes: 'bin/hermes.exe',
+    openclaw: 'openclaw.mjs',
+  };
+  for (const name of runtimeNames) {
+    const version = pkg.runtimeManifest?.[name]?.version;
+    if (!version) continue;
+    const binaryAbs = path.join(
+      context.appOutDir,
+      'resources',
+      'wesight-runtime',
+      name,
+      version,
+      targetSlice,
+      binaryRel[name]
+    );
+    if (!existsSync(binaryAbs)) {
+      console.warn(`[electron-builder-hooks] skipping sign for ${name}: not found at ${binaryAbs}`);
+      continue;
+    }
+    console.log(`[electron-builder-hooks] signtool sign ${binaryAbs}`);
+    const r = spawnSync('signtool', [
+      'sign', '/fd', 'sha256',
+      '/tr', 'http://timestamp.digicert.com',
+      '/td', 'sha256',
+      '/f', process.env.CSC_LINK || '',
+      '/p', process.env.CSC_KEY_PASSWORD || '',
+      binaryAbs,
+    ], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      throw new Error(`[electron-builder-hooks] signtool failed for ${binaryAbs} (status ${r.status})`);
+    }
+  }
+  console.log('[electron-builder-hooks] Signed all 8 Windows runtimes.');
+}
+
+function verifyBundledRuntimes(context) {
+  // Read versions directly from package.json:runtimeManifest. This works
+  // regardless of how electron-builder was invoked (no env-var setup needed).
+  const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+  const targetId = resolveOpenClawRuntimeTargetId(context);
+  if (!targetId) return; // no target slice (e.g. platform pre-build)
+  // Runtimes that are "best effort" — they have no portable upstream for
+  // the current platform and are expected to be missing from the vendor
+  // tree. The resolver falls back to the system PATH for these.
+  const bestEffort = new Set(['python', 'git', 'hermes']);
+  let missing = [];
+  for (const name of ['node', 'python', 'git', 'gh', 'claudecode', 'codex', 'hermes', 'openclaw']) {
+    const spec = pkg.runtimeManifest?.[name];
+    if (!spec) {
+      throw new Error(`[electron-builder-hooks] runtimeManifest.${name} missing in package.json`);
+    }
+    const slicePath = path.join(
+      __dirname, '..', 'vendor', 'bundled-runtimes', name, spec.version, targetId
+    );
+    if (!existsSync(slicePath)) {
+      if (bestEffort.has(name)) {
+        console.warn(
+          `[electron-builder-hooks] Runtime ${name}@${spec.version} not bundled for target ${targetId}; `
+          + `resolver will fall back to system PATH.`
+        );
+        continue;
+      }
+      missing.push(`${name}@${spec.version} (expected at ${slicePath})`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] Bundled runtimes missing for target ${targetId}: ${missing.join(', ')}. `
+      + `Run \`npm run setup-bundled-runtimes\` first.`
+    );
+  }
+  console.log(`[electron-builder-hooks] Verified bundled runtimes for target ${targetId} (best-effort runtimes may be absent).`);
 }
 
 module.exports = {

@@ -17,9 +17,24 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
+// Resolve the openclaw runtime directory. Order:
+//   1. CLI arg (used by the openclaw:runtime:<target> chain)
+//   2. OPENCLAW_RUNTIME_DIR env var (also a chain escape hatch)
+//   3. Bundled-runtimes namespace (post-Task-16 default): <root>/vendor/bundled-runtimes/openclaw/<manifest-version>/current
+//   4. Legacy path: <root>/vendor/openclaw-runtime/current (pre-Task-16)
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+const manifestVersion = pkg.runtimeManifest?.openclaw?.version;
+const bundledDefault = manifestVersion
+  ? path.join(rootDir, 'vendor', 'bundled-runtimes', 'openclaw', manifestVersion, 'current')
+  : null;
+const legacyDefault = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 const runtimeDir = process.argv[2]
   ? path.resolve(process.argv[2])
-  : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+  : process.env.OPENCLAW_RUNTIME_DIR
+    ? path.resolve(process.env.OPENCLAW_RUNTIME_DIR)
+    : bundledDefault && fs.existsSync(bundledDefault)
+      ? bundledDefault
+      : legacyDefault;
 
 const bundleOutPath = path.join(runtimeDir, 'gateway-bundle.mjs');
 
@@ -33,6 +48,19 @@ if (!fs.existsSync(entryPath)) {
   console.error(`[bundle-openclaw-gateway] Entry point not found: ${entryPath}`);
   console.error(`[bundle-openclaw-gateway] Make sure the openclaw runtime is built first.`);
   process.exit(1);
+}
+
+// When the source is a pre-built distribution (npm `openclaw` package, no
+// `src/` directory), the `dist/` files are already esbuild-bundled by
+// upstream. Re-bundling would double the work and bloat the package; skip
+// the esbuild step entirely and just copy the chosen entry into place.
+const hasSourceTree = fs.existsSync(path.join(runtimeDir, 'src'));
+if (!hasSourceTree) {
+  fs.mkdirSync(path.dirname(bundleOutPath), { recursive: true });
+  fs.copyFileSync(entryPath, bundleOutPath);
+  const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
+  console.log(`[bundle-openclaw-gateway] pre-built distribution detected; copied ${path.relative(runtimeDir, entryPath)} -> gateway-bundle.mjs (${sizeKB} KB)`);
+  process.exit(0);
 }
 
 // Skip if bundle is already up-to-date (newer than the entry point).

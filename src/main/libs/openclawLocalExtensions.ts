@@ -30,10 +30,27 @@ const findLocalExtensionsSourceDir = (): string | null => {
 const findBundledExtensionsDir = (): string | null => {
   const candidates = app.isPackaged
     ? [path.join(process.resourcesPath, 'cfmind', 'extensions')]
-    : [
-        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
-      ];
+    : (() => {
+        const pkgPath = path.join(app.getAppPath(), 'package.json');
+        let openclawVersion = '';
+        try {
+          const pkg = require(pkgPath);
+          openclawVersion = pkg.runtimeManifest?.openclaw?.version || '';
+        } catch {
+          // ignore
+        }
+        if (!openclawVersion || openclawVersion === 'REPLACE_AFTER_FIRST_FETCH') {
+          return [
+            path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
+            path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
+          ];
+        }
+        const bundledBase = path.join('vendor', 'bundled-runtimes', 'openclaw', openclawVersion, 'current', 'extensions');
+        return [
+          path.join(app.getAppPath(), bundledBase),
+          path.join(process.cwd(), bundledBase),
+        ];
+      })();
 
   for (const candidate of candidates) {
     try {

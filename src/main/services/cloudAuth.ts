@@ -39,7 +39,13 @@ export class CloudAuthService {
     await this.deviceService.init();
   }
 
-  async getStatus(): Promise<{ isLoggedIn: boolean; user?: CloudUserInfo; hasCompletedFirstLogin: boolean }> {
+  async getStatus(): Promise<{
+    isLoggedIn: boolean;
+    user?: CloudUserInfo;
+    hasCompletedFirstLogin: boolean;
+    coin: number;
+    subscriptionPlan: string;
+  }> {
     const tokens = await this.tokenStore.load();
     const userRaw = this.db.prepare("SELECT value FROM kv WHERE key = 'cloud_user_info'").get() as
       | { value: string }
@@ -55,6 +61,8 @@ export class CloudAuthService {
       isLoggedIn: !!tokens,
       user,
       hasCompletedFirstLogin,
+      coin: user?.coin ?? 0,
+      subscriptionPlan: user?.subscriptionPlan ?? '',
     };
   }
 
@@ -207,7 +215,9 @@ export class CloudAuthService {
         await this.tokenStore.save({
           accessToken: parsed.value.accessToken,
           refreshToken: parsed.value.refreshToken || stored.refreshToken,
-          expiresAt: Date.now() + parsed.value.expiresIn * 1000,
+          // parsed.value.expiresIn is the absolute access-token expiry in ms epoch
+          // (RunNode: data.expiresTime). Store it directly as CloudAuthTokens.expiresAt.
+          expiresAt: parsed.value.expiresIn,
         });
         return true;
       } catch (e) {
@@ -260,7 +270,9 @@ export class CloudAuthService {
       await this.tokenStore.save({
         accessToken: parsed.value.accessToken,
         refreshToken: parsed.value.refreshToken,
-        expiresAt: Date.now() + parsed.value.expiresIn * 1000,
+        // parsed.value.expiresIn is the absolute access-token expiry in ms epoch
+        // (RunNode: data.expiresTime). Store it directly as CloudAuthTokens.expiresAt.
+        expiresAt: parsed.value.expiresIn,
       });
 
       void this.deviceService.afterLogin().catch((e) => console.warn('[CloudAuth] device register:', e));
@@ -291,14 +303,14 @@ export class CloudAuthService {
 
   private persistUserInfo(user: CloudUserInfo): void {
     this.db.prepare(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'
-    ).run('cloud_user_info', JSON.stringify(user));
+      'INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)'
+    ).run('cloud_user_info', JSON.stringify(user), Date.now());
   }
 
   private markFirstLoginComplete(): void {
     this.db.prepare(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'
-    ).run('has_completed_first_login', 'true');
+      'INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)'
+    ).run('has_completed_first_login', 'true', Date.now());
   }
 
   private broadcastLoggedOut(): void {

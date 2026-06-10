@@ -3,7 +3,12 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
+import type { RuntimeResolver } from '../runtimeResolver';
 import { type ApiConfigOverride,buildEnvForConfig, getCurrentApiConfig, resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
+let coworkUtilRuntimeResolver: RuntimeResolver | null = null;
+export function setCoworkUtilRuntimeResolver(r: RuntimeResolver | null): void {
+  coworkUtilRuntimeResolver = r;
+}
 import { coworkLog } from './coworkLogger';
 import {
   buildAnthropicMessagesUrl,
@@ -992,6 +997,15 @@ function ensureWindowsBashUtf8InitScript(): string | null {
 
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   const electronNodeRuntimePath = getElectronNodeRuntimePath();
+
+  // Bundled runtime bin paths (e.g. node, python, git, gh) are prepended to PATH
+  // when RuntimeResolver is wired in (see setCoworkUtilRuntimeResolver). This
+  // ensures child processes (e.g. claude shebang #!/usr/bin/env node) find
+  // the bundled node first, before the host's node.
+  if (coworkUtilRuntimeResolver) {
+    const claudecodePath = coworkUtilRuntimeResolver.buildPath('claudecode');
+    env.PATH = claudecodePath + (env.PATH ? delimiter + env.PATH : '');
+  }
 
   if (app.isPackaged && !env.WESIGHT_ELECTRON_PATH) {
     env.WESIGHT_ELECTRON_PATH = electronNodeRuntimePath;

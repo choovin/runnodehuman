@@ -68,7 +68,8 @@ import {
   rejectPairingRequest,
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
-import { probeAndReport, registerCloudAuthHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
+import { probeAndReport, registerCloudAuthHandlers, registerCloudPlatformProviderHandlers, setCloudApiBaseUrlOverride } from './ipcHandlers/cloudAuth';
+import { registerRuntimeHandlers } from './ipcHandlers/runtime';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -85,8 +86,10 @@ import {
   HermesRuntimeAdapter,
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
+import { setRuntimeResolver as setExternalCliRuntimeResolver } from './libs/agentEngine/externalCliRuntimeAdapter';
 import { formatApiFetchLogPayload } from './libs/apiFetchLogSanitizer';
 import { cancelActiveDownload,downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
+import { setRuntimeResolver } from './libs/claudeSettings';
 import { getCurrentApiConfig, resolveCurrentApiConfig, setStoreGetter } from './libs/claudeSettings';
 import { CodexAppManager } from './libs/codexAppManager';
 import { CodexAppServerClient } from './libs/codexAppServerClient';
@@ -102,10 +105,12 @@ import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher,startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
 import { CoworkRunner } from './libs/coworkRunner';
 import { ensureCoworkStudioAssets } from './libs/coworkStudioAssets';
+import { setCoworkUtilRuntimeResolver } from './libs/coworkUtil';
 import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
 import { DeepSeekTuiRuntimeManager } from './libs/deepSeekTuiRuntimeManager';
 import { getServerApiBaseUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig,resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
+import { setRuntimeResolver as setInstallerRuntimeResolver } from './libs/externalAgentCliInstaller';
 import {
   ExternalAgentCliInstaller,
   type ExternalAgentCliInstallProgress,
@@ -123,6 +128,7 @@ import {
   getExternalAgentEnvironmentSnapshot,
   getPlaceholderExternalAgentEnvironmentSnapshot,
 } from './libs/externalAgentEnvironment';
+import { resolveLocalClaudeCodeConfigSnapshot } from './libs/externalAgentLocalEnv';
 import {
   type ExternalAgentProviderAppType,
   type ExternalAgentProviderInput,
@@ -189,7 +195,10 @@ import {
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
 import { McpStore } from './mcpStore';
 import { run as runLegacyAuthCleanup } from './migrations/legacyAuthCleanup';
+import { stripQuarantineIfNeeded } from './runtimeHealth';
+import { RuntimeResolver } from './runtimeResolver';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
+import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -1211,6 +1220,16 @@ const resolveRuntimeModelSnapshot = (engine: CoworkAgentEngine): RuntimeModelSna
   const appType = getExternalProviderAppTypeForEngine(engine);
   if (appType && configSource === ExternalAgentConfigSource.LocalCli) {
     const provider = getExternalAgentProviderStore().getCurrentProvider(appType);
+    if (engine === CoworkAgentEngineValue.ClaudeCode) {
+      const localClaudeConfig = resolveLocalClaudeCodeConfigSnapshot(provider);
+      return {
+        providerKey: localClaudeConfig?.sourceType === 'selected_provider' ? provider?.id ?? null : null,
+        providerName: localClaudeConfig?.sourceName ?? provider?.name ?? null,
+        modelId: localClaudeConfig?.model || provider?.summary.model?.trim() || null,
+        modelName: localClaudeConfig?.model || provider?.summary.model?.trim() || null,
+        configSource,
+      };
+    }
     return {
       providerKey: provider?.id ?? null,
       providerName: provider?.name ?? null,
@@ -7427,7 +7446,34 @@ if (!gotTheLock) {
 
     // Cloud auth (RunNode)
     const cloudBroadcaster = new EventEmitter();
-    registerCloudAuthHandlers(getStore().getDatabase(), cloudBroadcaster);
+    const cloudAuthService = registerCloudAuthHandlers(getStore().getDatabase(), cloudBroadcaster);
+    const platformProviderService = new CloudPlatformProviderService(
+      getStore().getDatabase(),
+      cloudAuthService,
+      cloudBroadcaster
+    );
+    void platformProviderService.init();
+    registerCloudPlatformProviderHandlers(platformProviderService, cloudBroadcaster);
+
+    // Bundled runtime resolver (8 runtimes shipped inside the installer).
+    const runtimeResolver = new RuntimeResolver(process.resourcesPath);
+    const runtimeHealth = runtimeResolver.tryGetAll();
+    const missingRuntimes = Array.from(runtimeHealth.entries())
+      .filter(([, v]) => v === null)
+      .map(([k]) => k);
+    if (missingRuntimes.length > 0) {
+      console.warn('[Main] RuntimeResolver: missing runtimes:', missingRuntimes.join(', '));
+    } else {
+      console.info('[Main] RuntimeResolver: all 8 runtimes resolved from bundled resources');
+    }
+    registerRuntimeHandlers(runtimeResolver);
+    setRuntimeResolver(runtimeResolver);
+    setExternalCliRuntimeResolver(runtimeResolver);
+    setCoworkUtilRuntimeResolver(runtimeResolver);
+    setInstallerRuntimeResolver(runtimeResolver);
+
+    // Strip macOS quarantine xattr on first launch (idempotent on other platforms).
+    stripQuarantineIfNeeded(process.resourcesPath);
 
     console.log('[Main] initApp: creating window');
     createWindow();
