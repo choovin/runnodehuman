@@ -13,6 +13,7 @@ export default defineConfig({
   define: {
     // KaTeX ESM bundle references this compile-time constant.
     __VERSION__: JSON.stringify(katexVersion),
+    'import.meta.env.VITE_CLOUD_API_BASE_URL': JSON.stringify(process.env.VITE_CLOUD_API_BASE_URL || ''),
   },
   plugins: [
     react(),
@@ -27,7 +28,7 @@ export default defineConfig({
             minify: false,
             rollupOptions: {
               external: (id) => {
-                const staticExternals = ['better-sqlite3', 'discord.js', 'zlib-sync', '@discordjs/opus', 'bufferutil', 'utf-8-validate', 'node-nim', 'nim-web-sdk-ng'];
+                const staticExternals = ['better-sqlite3', 'better-sqlite3-multiple-ciphers', 'discord.js', 'zlib-sync', '@discordjs/opus', 'bufferutil', 'utf-8-validate', 'node-nim', 'nim-web-sdk-ng'];
                 if (staticExternals.includes(id)) return true;
                 if (id.startsWith('@larksuite/openclaw-lark-tools') || id.startsWith('@larksuite/openclaw-lark')) return true;
                 return false;

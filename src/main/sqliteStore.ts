@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import crypto from 'crypto';
 import { app } from 'electron';
 import { EventEmitter } from 'events';

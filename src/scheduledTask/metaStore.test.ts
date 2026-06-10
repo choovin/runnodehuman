@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { expect,test } from 'vitest';
 
 import { BindingKind,OriginKind } from './constants';

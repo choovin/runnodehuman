@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { CoworkEventStore, RuntimeEventType } from './coworkEventStore';

@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Authentication
+
+WeSight now uses RunNode member auth (not URS OAuth). See `docs/superpowers/specs/2026-06-05-wesight-runnode-user-auth-design.md`. Code lives in:
+- `src/main/services/cloudAuth.ts`
+- `src/main/services/cloudAuthTokenStore.ts` (SQLCipher)
+- `src/main/services/cloudUserDeviceService.ts` (main-process heartbeat)
+- `src/renderer/services/cloudAuth.ts`
+- `src/renderer/store/slices/cloudAuthSlice.ts`
+- `src/renderer/components/LoginGate.tsx`
+- `src/renderer/components/LoginModal.tsx`
+
 ## Build and Development Commands
 
 ```bash
@@ -323,6 +334,26 @@ When adding or modifying log statements, verify:
   - Artifacts: preview HTML, SVG, Mermaid diagrams, React components
   - Settings: theme switching, language switching
 - Keep console warnings/errors clean; lint via `npm run lint` before submitting.
+
+### Running E2E tests
+
+End-to-end tests live in `tests/e2e/` and are driven by [Playwright](https://playwright.dev/) using the `_electron` API to launch the built app. They verify full app flows that cannot be covered by unit tests — currently the first-run login gate and the auto-restore flow after restart.
+
+```bash
+# one-time install of the Playwright test runner (no browser binaries required
+# for the electron project; the runner drives the existing electron build)
+npm install --save-dev @playwright/test
+
+# build the renderer + main process bundles, then run the e2e specs
+npm run test:e2e
+
+# or run the spec directly after a build
+npx playwright test tests/e2e/auth.spec.ts
+```
+
+The `test:e2e` script runs `npm run build` (renderer bundle in `dist/`) and `npm run compile:electron` (main process in `dist-electron/`) before invoking `playwright test`, so the spec can `electron.launch` against the production build. If you only changed renderer code, `npm run compile:electron` is skipped; if you only changed main code, `npm run build` still rebuilds the renderer bundle to keep both sides in sync.
+
+Note: the current `auth.spec.ts` requires a real RunNode server to complete the password login. In CI without a test server it will fail at the `password-submit` step — this is expected and serves as living documentation of the flow. A future iteration may swap in Playwright request mocking to fake the RunNode responses, or mark the spec `test.skip` when no server is available.
 
 ## Internationalization (i18n)
 

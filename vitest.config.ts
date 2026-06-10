@@ -8,7 +8,10 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.test.ts'],
-    environment: 'node',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    environment: 'happy-dom',
+    environmentMatchGlobs: [
+      ['src/renderer/components/**/*.test.ts', 'node'],
+    ],
   },
 });

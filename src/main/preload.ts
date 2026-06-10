@@ -726,6 +726,35 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('auth:quotaChanged', handler);
     },
   },
+  cloudAuth: {
+    loginWithPassword: (payload: { mobile: string; password: string }) =>
+      ipcRenderer.invoke('cloud:auth:login-password', payload),
+    sendSmsCode: (payload: { mobile: string }) =>
+      ipcRenderer.invoke('cloud:auth:send-sms-code', payload),
+    loginWithSms: (payload: { mobile: string; code: string }) =>
+      ipcRenderer.invoke('cloud:auth:login-sms', payload),
+    wechatGetQr: (payload: { redirectUri: string }) =>
+      ipcRenderer.invoke('cloud:auth:wechat-qr', payload),
+    wechatPoll: (payload: { ticket: string }) =>
+      ipcRenderer.invoke('cloud:auth:wechat-poll', payload),
+    loginWithWechat: (payload: { code: string; state: string }) =>
+      ipcRenderer.invoke('cloud:auth:login-wechat', payload),
+    logout: () => ipcRenderer.invoke('cloud:auth:logout'),
+    getStatus: () => ipcRenderer.invoke('cloud:auth:get-status'),
+    onLoggedOut: (handler: () => void) => {
+      const wrapped = () => handler();
+      ipcRenderer.on('cloud:auth:logged-out', wrapped);
+      return () => ipcRenderer.off('cloud:auth:logged-out', wrapped);
+    },
+    onLoginSuccess: (handler: (payload: { user: any }) => void) => {
+      const wrapped = (_e: any, payload: any) => handler(payload);
+      ipcRenderer.on('cloud:auth:login-success', wrapped);
+      return () => ipcRenderer.off('cloud:auth:login-success', wrapped);
+    },
+  },
+  probeCloudBaseUrl: () => ipcRenderer.invoke('cloud:probe-base-url'),
+  setCloudApiBaseUrl: (url: string | null) =>
+    ipcRenderer.invoke('cloud:set-base-url', { url }),
   feishu: {
     install: {
       qrcode: (isLark: boolean) =>

@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
 // ---------------------------------------------------------------------------
 // Now import the class under test
 // ---------------------------------------------------------------------------
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from 'better-sqlite3-multiple-ciphers';
 
 import { ExternalAgentConfigSource } from '../shared/cowork/constants';
 import { CoworkStore } from './coworkStore';

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';

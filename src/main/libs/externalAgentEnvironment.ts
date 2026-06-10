@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';

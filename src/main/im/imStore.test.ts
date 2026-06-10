@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { afterEach, expect, test } from 'vitest';
 
 import { FeishuEngineKey } from '../../shared/im/constants';

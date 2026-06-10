@@ -8,6 +8,7 @@ import AgentSetupWizard from './components/cowork/AgentSetupWizard';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import { LoginGate } from './components/LoginGate';
 import PrivacyDialog from './components/PrivacyDialog';
 import RuntimeDashboardView from './components/runtime/RuntimeDashboardView';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
@@ -21,7 +22,7 @@ import { defaultConfig, getProviderDisplayName } from './config';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
 import { type AppUpdateDownloadProgress, type AppUpdateInfo, checkForAppUpdate, UPDATE_HEARTBEAT_INTERVAL_MS,UPDATE_POLL_INTERVAL_MS } from './services/appUpdate';
-import { authService } from './services/auth';
+import { cloudAuthService } from './services/cloudAuth';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
 import { i18nService } from './services/i18n';
@@ -115,8 +116,8 @@ const App: React.FC = () => {
         await waitWithTimeout(i18nService.initialize(), 5000, 'i18nService.initialize');
 
         // 初始化认证服务（恢复登录状态）
-        console.info('[App] initializeApp: authService.init');
-        await authService.init();
+        console.info('[App] initializeApp: cloudAuthService.init');
+        await cloudAuthService.init();
 
         console.info('[App] initializeApp: configService.getConfig');
         const config = await configService.getConfig();
@@ -152,7 +153,7 @@ const App: React.FC = () => {
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
         if (resolvedModels.length > 0) {
           dispatch(setAvailableModels(resolvedModels));
-          // Search all available models (including server models loaded by authService)
+          // Search all available models (including server models loaded by cloudAuthService)
           // so that a previously selected server model is correctly restored.
           const allModels = store.getState().model.availableModels;
           const preferredModel = allModels.find(
@@ -332,10 +333,6 @@ const App: React.FC = () => {
       toastTimerRef.current = null;
     }, 2200);
   }, []);
-
-  const handleShowLogin = useCallback(() => {
-    showToast(i18nService.t('featureInDevelopment'));
-  }, [showToast]);
 
   const runUpdateCheck = useCallback(async () => {
     try {
@@ -708,111 +705,112 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
-      {toastMessage && (
-        <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
-      )}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        <Sidebar
-          onShowLogin={handleShowLogin}
-          onShowSettings={handleShowSettings}
-          activeView={mainView}
-          onShowSkills={handleShowSkills}
-          onShowCowork={handleShowCowork}
-          onShowRuntimeDashboard={handleShowRuntimeDashboard}
-          onShowAgents={handleShowAgents}
-          onShowAgentSettings={handleShowAgentSettings}
-          onNewChat={handleNewChat}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={handleToggleSidebar}
-          updateBadge={!isSidebarCollapsed ? updateBadge : null}
-          hideLogin={enterpriseConfig?.ui?.login === 'hide'}
-        />
-        <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-          <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
-            <EngineStartupOverlay />
-            {mainView === 'skills' ? (
-              <SkillsView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                onCreateSkillByChat={handleCreateSkillByChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
-                readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
-              />
-            ) : mainView === 'runtime' ? (
-              <RuntimeDashboardView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                onShowCowork={handleShowCowork}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
-              />
-            ) : mainView === 'agents' ? (
-              <AgentsView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                onShowCowork={handleShowCowork}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
-              />
-            ) : (
-              <CoworkView
-                onRequestAppSettings={handleShowSettings}
-                onShowSkills={handleShowSkills}
-                onShowMcp={handleShowMcp}
-                onShowAgents={handleShowAgents}
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
-              />
-            )}
+    <LoginGate>
+      <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+        {toastMessage && (
+          <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
+        )}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <Sidebar
+            onShowSettings={handleShowSettings}
+            activeView={mainView}
+            onShowSkills={handleShowSkills}
+            onShowCowork={handleShowCowork}
+            onShowRuntimeDashboard={handleShowRuntimeDashboard}
+            onShowAgents={handleShowAgents}
+            onShowAgentSettings={handleShowAgentSettings}
+            onNewChat={handleNewChat}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={handleToggleSidebar}
+            updateBadge={!isSidebarCollapsed ? updateBadge : null}
+            hideLogin={enterpriseConfig?.ui?.login === 'hide'}
+          />
+          <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+            <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
+              <EngineStartupOverlay />
+              {mainView === 'skills' ? (
+                <SkillsView
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebar={handleToggleSidebar}
+                  onNewChat={handleNewChat}
+                  onCreateSkillByChat={handleCreateSkillByChat}
+                  updateBadge={isSidebarCollapsed ? updateBadge : null}
+                  readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
+                />
+              ) : mainView === 'runtime' ? (
+                <RuntimeDashboardView
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebar={handleToggleSidebar}
+                  onNewChat={handleNewChat}
+                  onShowCowork={handleShowCowork}
+                  updateBadge={isSidebarCollapsed ? updateBadge : null}
+                />
+              ) : mainView === 'agents' ? (
+                <AgentsView
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebar={handleToggleSidebar}
+                  onNewChat={handleNewChat}
+                  onShowCowork={handleShowCowork}
+                  updateBadge={isSidebarCollapsed ? updateBadge : null}
+                />
+              ) : (
+                <CoworkView
+                  onRequestAppSettings={handleShowSettings}
+                  onShowSkills={handleShowSkills}
+                  onShowMcp={handleShowMcp}
+                  onShowAgents={handleShowAgents}
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebar={handleToggleSidebar}
+                  onNewChat={handleNewChat}
+                  updateBadge={isSidebarCollapsed ? updateBadge : null}
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
-      {showSettings && (
-        <Settings
-          onClose={handleCloseSettings}
-          initialTab={settingsOptions.initialTab}
-          notice={settingsOptions.notice}
-          openedAtMs={settingsOptions.openedAtMs}
-          onUpdateFound={handleUpdateFound}
-          enterpriseConfig={enterpriseConfig}
-        />
-      )}
-      {showUpdateModal && updateInfo && (
-        <AppUpdateModal
-          updateInfo={updateInfo}
-          onCancel={() => {
-            if (updateModalState === 'info' || updateModalState === 'error') {
-              setShowUpdateModal(false);
-              setUpdateModalState('info');
-              setUpdateError(null);
-              setDownloadProgress(null);
-            }
-          }}
-          onConfirm={handleConfirmUpdate}
-          modalState={updateModalState}
-          downloadProgress={downloadProgress}
-          errorMessage={updateError}
-          onCancelDownload={handleCancelDownload}
-          onRetry={handleRetryUpdate}
-        />
-      )}
-      {permissionModal}
-      {privacyAgreed === false && (
-        <PrivacyDialog
-          onAccept={handlePrivacyAccept}
-          onReject={handlePrivacyReject}
-        />
-      )}
-      {privacyAgreed === true && agentSetupCompleted === false && (
-        <AgentSetupWizard onComplete={handleAgentSetupComplete} />
-      )}
-    </div>
+        {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
+        {showSettings && (
+          <Settings
+            onClose={handleCloseSettings}
+            initialTab={settingsOptions.initialTab}
+            notice={settingsOptions.notice}
+            openedAtMs={settingsOptions.openedAtMs}
+            onUpdateFound={handleUpdateFound}
+            enterpriseConfig={enterpriseConfig}
+          />
+        )}
+        {showUpdateModal && updateInfo && (
+          <AppUpdateModal
+            updateInfo={updateInfo}
+            onCancel={() => {
+              if (updateModalState === 'info' || updateModalState === 'error') {
+                setShowUpdateModal(false);
+                setUpdateModalState('info');
+                setUpdateError(null);
+                setDownloadProgress(null);
+              }
+            }}
+            onConfirm={handleConfirmUpdate}
+            modalState={updateModalState}
+            downloadProgress={downloadProgress}
+            errorMessage={updateError}
+            onCancelDownload={handleCancelDownload}
+            onRetry={handleRetryUpdate}
+          />
+        )}
+        {permissionModal}
+        {privacyAgreed === false && (
+          <PrivacyDialog
+            onAccept={handlePrivacyAccept}
+            onReject={handlePrivacyReject}
+          />
+        )}
+        {privacyAgreed === true && agentSetupCompleted === false && (
+          <AgentSetupWizard onComplete={handleAgentSetupComplete} />
+        )}
+      </div>
+    </LoginGate>
   );
 };
 

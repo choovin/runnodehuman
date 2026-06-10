@@ -1,4 +1,4 @@
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from 'better-sqlite3-multiple-ciphers';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';

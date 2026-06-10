@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import { v4 as uuidv4 } from 'uuid';
 
 import type { CoworkMessage, CoworkMessageMetadata, CoworkMessageType } from './coworkStore';

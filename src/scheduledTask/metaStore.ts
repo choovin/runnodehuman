@@ -3,7 +3,7 @@
  * OpenClaw gateway cron.* API doesn't support custom fields,
  * so we persist origin/binding locally in SQLite.
  */
-import type Database from 'better-sqlite3';
+import type Database from 'better-sqlite3-multiple-ciphers';
 
 export interface TaskMeta {
   taskId: string;
