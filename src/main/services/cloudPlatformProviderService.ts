@@ -17,6 +17,12 @@ export class CloudPlatformProviderService {
   private store: CloudPlatformProviderStore;
   private inFlightSync: Promise<boolean> | null = null;
   private unsubLoginSuccess: (() => void) | null = null;
+  /**
+   * Cached last-known record. Updated by sync(), setOverride(), resetDefault().
+   * Read by getCached() to avoid hitting SQLCipher on hot paths (e.g. engine
+   * config rewrite on every UI event).
+   */
+  private cachedRecord: CloudPlatformProviderRecord | null = null;
 
   constructor(
     private readonly db: Database.Database,
@@ -36,6 +42,13 @@ export class CloudPlatformProviderService {
     this.unsubLoginSuccess = () => {
       this.broadcaster.off(CloudAuthChannel.LoginSuccessEvent, loginHandler);
     };
+    // Pre-populate the cache from the store on startup so getCached() returns
+    // something useful before the first sync() completes.
+    try {
+      this.cachedRecord = await this.store.load();
+    } catch (e) {
+      console.error('[CloudPlatformProvider] initial cache load failed:', e);
+    }
     void this.ensureSynced().catch((e) =>
       console.error('[CloudPlatformProvider] ensureSynced failed:', e)
     );
@@ -92,6 +105,7 @@ export class CloudPlatformProviderService {
           userOverride: existing?.userOverride,
         };
         await this.store.save(record);
+        this.cachedRecord = record;
         this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
         return true;
       } catch (e) {
@@ -129,6 +143,7 @@ export class CloudPlatformProviderService {
       },
     };
     await this.store.save(record);
+    this.cachedRecord = record;
     this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
     return { success: true };
   }
@@ -144,10 +159,23 @@ export class CloudPlatformProviderService {
       lastSyncedAt: existing.lastSyncedAt,
     };
     await this.store.save(record);
+    this.cachedRecord = record;
     this.broadcaster.emit(CloudPlatformProviderChannel.UpdatedEvent, { record });
     await this.sync().catch((e) =>
       console.error('[CloudPlatformProvider] post-reset sync failed:', e)
     );
     return { success: true };
+  }
+
+  /**
+   * Synchronous accessor for the last in-memory record. Returns null until
+   * the first successful sync() / setOverride() / resetDefault() / init() load.
+   *
+   * Use this on hot paths (engine config rewrites triggered by UI events)
+   * to avoid hitting SQLCipher. The cached value may be slightly stale
+   * (up to one sync interval) but is always the latest known value.
+   */
+  getCached(): CloudPlatformProviderRecord | null {
+    return this.cachedRecord;
   }
 }
