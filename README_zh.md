@@ -206,10 +206,10 @@ npm run electron:dev:openclaw
 npm run electron:dev:hermes
 ```
 
-常用 OpenClaw 开发变量：
+常用 OpenClaw 开发变量 (legacy git-clone workflow; `npm run dist:mac` uses the bundled-runtimes fetch path and the `openclaw` npm package — no `OPENCLAW_SRC` needed):
 
 ```bash
-# 指定 OpenClaw 源码路径
+# 指定 OpenClaw 源码路径 (legacy git-clone 流程)
 OPENCLAW_SRC=/path/to/openclaw npm run electron:dev:openclaw
 
 # 强制重建 OpenClaw runtime
