@@ -84,6 +84,7 @@ import McpManager from './mcp/McpManager';
 import PetSprite, { PetMood } from './pet/PetSprite';
 import { ScheduledTasksView } from './scheduledTasks';
 import { CloudApiSection } from './Settings/CloudApiSection';
+import { CloudPlatformProviderSection } from './Settings/CloudPlatformProviderSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -4550,6 +4551,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 {i18nService.t('authCloudBaseUrlLabel')}
               </h4>
               <CloudApiSection />
+            </div>
+
+            {/* Cloud Platform Provider Section (B spec: model sync) */}
+            <div>
+              <CloudPlatformProviderSection />
             </div>
 
             {/* Appearance Section — mode selector + theme gallery */}
