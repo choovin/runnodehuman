@@ -85,6 +85,50 @@ export interface ResolveApiConfigOptions {
 }
 
 /**
+ * Callback for the engine-config write side-effect. The resolver does not
+ * call this directly; it's invoked by the engine-config dispatch function
+ * (applyExternalAgentConfigForEngine) when the platform-provider path
+ * produces a value. Wired in main.ts to call
+ * `getExternalAgentProviderStore().applyProviderToLive(engine, config)`.
+ *
+ * Returning `true` means "the write happened via the new path" (caller
+ * should NOT fall through to the legacy write). Returning `false` means
+ * "the new path was skipped — caller should fall through".
+ */
+export type ApplyPlatformConfigFn = (
+  engine: CoworkAgentEngine,
+  config: CoworkApiConfig
+) => boolean;
+
+let applyPlatformConfigImpl: ApplyPlatformConfigFn | null = null;
+
+export function setApplyPlatformConfigFn(fn: ApplyPlatformConfigFn | null): void {
+  applyPlatformConfigImpl = fn;
+}
+
+export function getApplyPlatformConfigFn(): ApplyPlatformConfigFn | null {
+  return applyPlatformConfigImpl;
+}
+
+/**
+ * Invoked by applyExternalAgentConfigForEngine when the platform-provider
+ * path produces a value. Returns true if the caller should skip the legacy
+ * write; false if the caller should fall through.
+ */
+export function tryApplyPlatformConfig(
+  engine: CoworkAgentEngine,
+  config: CoworkApiConfig
+): boolean {
+  if (!applyPlatformConfigImpl) return false;
+  try {
+    return applyPlatformConfigImpl(engine, config);
+  } catch (err) {
+    console.error(`[PlatformProviderResolver] tryApplyPlatformConfig threw for ${engine}, falling back:`, err);
+    return false;
+  }
+}
+
+/**
  * Resolves the CoworkApiConfig for an engine. Returns null if no source
  * has a value (engine falls back to its native config).
  *

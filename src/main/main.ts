@@ -201,7 +201,11 @@ import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
 import { CloudPlatformProviderChannel } from '../shared/cloudPlatformProvider/constants';
 import { effective } from '../shared/cloudPlatformProvider/types';
-import { ENGINE_MODEL_DEFAULT, setPlatformProviderResolver } from './libs/platformProviderResolver';
+import {
+  ENGINE_MODEL_DEFAULT,
+  setApplyPlatformConfigFn,
+  setPlatformProviderResolver,
+} from './libs/platformProviderResolver';
 import { CoworkAgentEngine as CoworkAgentEngineType } from '../shared/cowork/constants';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
@@ -7483,6 +7487,15 @@ if (!gotTheLock) {
         model: ENGINE_MODEL_DEFAULT[engine] ?? '',
         apiType: 'openai',
       };
+    });
+
+    // C spec, Task 5/6/7: when the platform-provider path produces a value,
+    // route the engine-config write through applyPlatformConfigToLive (which
+    // uses the wesightConfigFile.ts backup helpers). Returning true signals
+    // the dispatch function to skip the legacy per-engine write.
+    setApplyPlatformConfigFn((engine: CoworkAgentEngineType, config) => {
+      getExternalAgentProviderStore().applyPlatformConfigToLive(engine, config);
+      return true;
     });
 
     // C spec, Task 4: re-apply the current engine's config when the

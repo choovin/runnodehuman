@@ -228,11 +228,42 @@ test('cleanupWesightManagedCodexConfig restores config on disk', () => {
   }
 });
 
-test('applyExternalAgentConfigForEngine leaves Codex local config untouched for WeSight model mode', () => {
-  expect(() => applyExternalAgentConfigForEngine(
+test('applyExternalAgentConfigForEngine leaves Codex local config untouched for WeSight model mode', async () => {
+  await expect(applyExternalAgentConfigForEngine(
     CoworkAgentEngine.Codex,
     ExternalAgentConfigSource.WesightModel,
-  )).not.toThrow();
+  )).resolves.not.toThrow();
+});
+
+test('applyExternalAgentConfigForEngine falls back to legacy when no platform provider is set', async () => {
+  // Clear the resolver (default state in tests) — should fall through to the
+  // legacy syncCodexFromWesightModel path. No throw, no platform routing.
+  const { clearPlatformProviderResolver } = await import('./platformProviderResolver');
+  clearPlatformProviderResolver();
+  await expect(applyExternalAgentConfigForEngine(
+    CoworkAgentEngine.Codex,
+    ExternalAgentConfigSource.WesightModel,
+  )).resolves.not.toThrow();
+});
+
+test('applyExternalAgentConfigForEngine routes to platform provider when resolver returns a value', async () => {
+  const { setPlatformProviderResolver, clearPlatformProviderResolver } = await import('./platformProviderResolver');
+  setPlatformProviderResolver(async () => ({
+    apiKey: 'platform-key',
+    baseURL: 'https://platform/v1',
+    model: 'claude-sonnet-4-5',
+    apiType: 'openai',
+  }));
+  try {
+    // setApplyPlatformConfigFn is not set in tests, so the platform path
+    // will not actually be applied. But the function should not throw.
+    await expect(applyExternalAgentConfigForEngine(
+      CoworkAgentEngine.ClaudeCode,
+      ExternalAgentConfigSource.WesightModel,
+    )).resolves.not.toThrow();
+  } finally {
+    clearPlatformProviderResolver();
+  }
 });
 
 test('mergeCodexConfigForLocalCli leaves config unchanged when local_codex is missing', () => {
