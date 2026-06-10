@@ -430,6 +430,23 @@ const SidebarLoginEntry: React.FC = () => {
       </button>
       {showMenu && isLoggedIn && (
         <div className="absolute bottom-full left-[-0.5rem] mb-1 w-[14.5rem] bg-surface rounded-xl shadow-popover border border-border overflow-hidden z-50 popover-enter">
+          <div className="px-4 pt-3 pb-2 border-b border-border">
+            <div className="text-sm font-medium text-foreground truncate">{displayName}</div>
+            {(user?.subscriptionPlan || typeof user?.coin === 'number') && (
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-secondary">
+                {user?.subscriptionPlan && (
+                  <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-1.5 py-0.5">
+                    {user.subscriptionPlan}
+                  </span>
+                )}
+                {typeof user?.coin === 'number' && (
+                  <span>
+                    {i18nService.t('authCoinLabel')} {user.coin.toLocaleString()}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
           <div className="py-1">
             <button
               type="button"
