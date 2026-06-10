@@ -387,10 +387,9 @@ export const applyLocalClaudeCodeEnvForPrintMode = (
 
   const credential = pickCredentialForPrintMode(localConfig.env, localConfig.meta);
   if (credential) {
-    // Claude Code --print currently reports ANTHROPIC_API_KEY as the key source.
-    // Mirror the selected local credential into both aliases for this subprocess only.
-    env.ANTHROPIC_API_KEY = credential.value;
-    env.ANTHROPIC_AUTH_TOKEN = credential.value;
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    env[credential.source] = credential.value;
   }
 
   console.log('[ExternalAgentLocalEnv] loaded local Claude Code config.', {

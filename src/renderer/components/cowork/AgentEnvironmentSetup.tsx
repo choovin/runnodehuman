@@ -222,11 +222,11 @@ const AgentEnvironmentSetup: React.FC<AgentEnvironmentSetupProps> = ({
     if (!status.config.configExists) {
       return 'agentSetupRepairConfigMissing';
     }
-    if (!status.config.currentProviderId && status.config.providerCount === 0) {
-      return 'agentSetupRepairAuthMissing';
-    }
     if (status.error) {
       return 'agentSetupRepairCliError';
+    }
+    if (status.authStatus !== 'logged_in') {
+      return 'agentSetupRepairAuthMissing';
     }
     return null;
   }, [getCliStatus, isSupportedInstallPlatform]);

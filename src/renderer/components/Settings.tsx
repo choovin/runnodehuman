@@ -636,13 +636,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const buildNoticeMessage = (): string | null => {
+  const buildNoticeMessage = useCallback((): string | null => {
     if (noticeI18nKey) {
       const base = i18nService.t(noticeI18nKey);
       return noticeExtra ? `${base} (${noticeExtra})` : base;
     }
     return notice ?? null;
-  };
+  }, [notice, noticeExtra, noticeI18nKey]);
 
   const [noticeMessage, setNoticeMessage] = useState<string | null>(() => buildNoticeMessage());
   const [testResult, setTestResult] = useState<ProviderConnectionTestResult | null>(null);
@@ -1390,13 +1390,17 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   }, [measureSettingsIpc]);
 
   useEffect(() => {
+    const initialThemeId = initialThemeIdRef.current;
+    const initialTheme = initialThemeRef.current;
+    const initialPetConfig = initialPetConfigRef.current;
+    const initialLanguage = initialLanguageRef.current;
     return () => {
       if (didSaveRef.current) {
         return;
       }
-      themeService.restoreTheme(initialThemeIdRef.current, initialThemeRef.current);
-      void window.electron.desktopPet.applyPreview(initialPetConfigRef.current);
-      i18nService.setLanguage(initialLanguageRef.current, { persist: false });
+      themeService.restoreTheme(initialThemeId, initialTheme);
+      void window.electron.desktopPet.applyPreview(initialPetConfig);
+      i18nService.setLanguage(initialLanguage, { persist: false });
     };
   }, []);
 
@@ -1409,7 +1413,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
   useEffect(() => {
     setNoticeMessage(buildNoticeMessage());
-  }, [notice, noticeI18nKey, noticeExtra]);
+  }, [buildNoticeMessage]);
 
   useEffect(() => {
     if (initialTab) {
@@ -2044,8 +2048,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         setCopilotError(result.error || 'Authentication failed');
         setCopilotAuthStatus('error');
       }
-    } catch (error: any) {
-      setCopilotError(error.message || 'Authentication failed');
+    } catch (error: unknown) {
+      setCopilotError(error instanceof Error ? error.message : 'Authentication failed');
       setCopilotAuthStatus('error');
     }
   };
@@ -2145,7 +2149,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
       // For Qwen provider, check if OAuth should be used
       if (firstEnabledProvider && firstEnabledProvider[0] === 'qwen') {
-        const qwenConfig = firstEnabledProvider[1] as any;
+        const qwenConfig = firstEnabledProvider[1] as ProviderConfig;
         if (!qwenConfig.apiKey && qwenConfig.oauthCredentials) {
           // Use OAuth token as API key placeholder
           apiKeyToUse = 'qwen-oauth';
@@ -2581,8 +2585,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setTestResult(null);
 
     // Check if provider has valid authentication (API Key or OAuth for Qwen)
-    const hasValidAuth = providerConfig.apiKey || 
-      (testingProvider === 'qwen' && (providerConfig as any).oauthCredentials);
+    const qwenOAuthCredentials = testingProvider === 'qwen' ? providers.qwen.oauthCredentials : undefined;
+    const hasValidAuth = providerConfig.apiKey || qwenOAuthCredentials;
     
     if (providerRequiresApiKey(testingProvider) && !hasValidAuth) {
       showTestResultModal({ success: false, message: i18nService.t('apiKeyRequired') }, testingProvider);
@@ -2805,7 +2809,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       let payload: ProvidersImportPayload;
       try {
         payload = JSON.parse(raw) as ProvidersImportPayload;
-      } catch (parseError) {
+      } catch {
         setError(i18nService.t('invalidProvidersFile'));
         return;
       }
@@ -3000,19 +3004,25 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
   // 渲染标签页
   const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = useMemo(() => {
+    const tabLabel = (key: string): string => {
+      if (language === 'en' || language === 'zh') {
+        return i18nService.t(key);
+      }
+      return i18nService.t(key);
+    };
     const allTabs = [
-      { key: 'general' as TabType,        label: i18nService.t('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
-      { key: 'coworkAgentEngine' as TabType, label: i18nService.t('coworkAgentEngine'), icon: <CpuChipIcon className="h-5 w-5" /> },
-      { key: 'model' as TabType,          label: i18nService.t('model'),          icon: <CubeIcon className="h-5 w-5" /> },
-      { key: 'im' as TabType,             label: i18nService.t('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
-      { key: 'email' as TabType,          label: i18nService.t('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
-      { key: 'scheduledTasks' as TabType, label: i18nService.t('scheduledTasksTitle'), icon: <ClockIcon className="h-5 w-5" /> },
-      { key: 'mcp' as TabType,            label: i18nService.t('mcpServers'),     icon: <ConnectorIcon className="h-5 w-5" /> },
-      { key: 'coworkMemory' as TabType,   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
-      { key: 'coworkAgent' as TabType,    label: i18nService.t('coworkAgentTab'),    icon: <UserCircleIcon className="h-5 w-5" /> },
-      { key: 'agents' as TabType,         label: i18nService.t('agentManagement'), icon: <UserGroupIcon className="h-5 w-5" /> },
-      { key: 'shortcuts' as TabType,      label: i18nService.t('shortcuts'),      icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><rect x="2" y="4" width="20" height="14" rx="2" /><line x1="6" y1="8" x2="8" y2="8" /><line x1="10" y1="8" x2="12" y2="8" /><line x1="14" y1="8" x2="16" y2="8" /><line x1="6" y1="12" x2="8" y2="12" /><line x1="10" y1="12" x2="14" y2="12" /><line x1="16" y1="12" x2="18" y2="12" /><line x1="8" y1="15.5" x2="16" y2="15.5" /></svg> },
-      { key: 'about' as TabType,          label: i18nService.t('about'),          icon: <InformationCircleIcon className="h-5 w-5" /> },
+      { key: 'general' as TabType,        label: tabLabel('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
+      { key: 'coworkAgentEngine' as TabType, label: tabLabel('coworkAgentEngine'), icon: <CpuChipIcon className="h-5 w-5" /> },
+      { key: 'model' as TabType,          label: tabLabel('model'),          icon: <CubeIcon className="h-5 w-5" /> },
+      { key: 'im' as TabType,             label: tabLabel('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
+      { key: 'email' as TabType,          label: tabLabel('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
+      { key: 'scheduledTasks' as TabType, label: tabLabel('scheduledTasksTitle'), icon: <ClockIcon className="h-5 w-5" /> },
+      { key: 'mcp' as TabType,            label: tabLabel('mcpServers'),     icon: <ConnectorIcon className="h-5 w-5" /> },
+      { key: 'coworkMemory' as TabType,   label: tabLabel('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
+      { key: 'coworkAgent' as TabType,    label: tabLabel('coworkAgentTab'),    icon: <UserCircleIcon className="h-5 w-5" /> },
+      { key: 'agents' as TabType,         label: tabLabel('agentManagement'), icon: <UserGroupIcon className="h-5 w-5" /> },
+      { key: 'shortcuts' as TabType,      label: tabLabel('shortcuts'),      icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><rect x="2" y="4" width="20" height="14" rx="2" /><line x1="6" y1="8" x2="8" y2="8" /><line x1="10" y1="8" x2="12" y2="8" /><line x1="14" y1="8" x2="16" y2="8" /><line x1="6" y1="12" x2="8" y2="12" /><line x1="10" y1="12" x2="14" y2="12" /><line x1="16" y1="12" x2="18" y2="12" /><line x1="8" y1="15.5" x2="16" y2="15.5" /></svg> },
+      { key: 'about' as TabType,          label: tabLabel('about'),          icon: <InformationCircleIcon className="h-5 w-5" /> },
     ];
     // Filter out tabs hidden by enterprise config
     // Filter out tabs with 'hide' action in enterprise config
@@ -3079,7 +3089,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     return status.authSource;
   };
 
-  const refreshAgentEnvironmentSnapshot = async (options: { forceRefresh?: boolean } = {}) => {
+  const refreshAgentEnvironmentSnapshot = async (options: { forceRefresh?: boolean; appTypes?: ExternalAgentProviderAppType[] } = {}) => {
     const snapshot = await coworkService.getAgentEngineSnapshot(options);
     setAgentEnvironmentSnapshot(snapshot);
   };
@@ -3754,6 +3764,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       window.dispatchEvent(new CustomEvent('wesight-agent-provider-changed', {
         detail: { appType: selectedExternalAgentAppType },
       }));
+      await refreshAgentEnvironmentSnapshot({
+        forceRefresh: true,
+        appTypes: [selectedExternalAgentAppType],
+      });
     } finally {
       setAgentProviderSwitchingId(null);
     }
@@ -4832,6 +4846,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               onSnapshotChange={setAgentEnvironmentSnapshot}
               compact
             />
+            {window.electron?.platform === 'win32' && (
+              <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                {i18nService.t('coworkAgentEngineWslUnsupportedHint')}
+              </div>
+            )}
             {expandedCoworkAgentEngine !== coworkAgentEngine && renderCoworkAgentApplyProgress()}
             <div className="space-y-3">
               {COWORK_AGENT_ENGINE_OPTIONS.map(renderAgentEngineOption)}
@@ -5796,7 +5815,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey && !(activeProvider === 'qwen' && (providers.qwen as any).oauthCredentials))}
+                  disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey && !(activeProvider === 'qwen' && providers.qwen.oauthCredentials))}
                   className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />

@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { join } from 'path';
 
-import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import { ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
@@ -18,12 +18,20 @@ type ProviderModel = {
   supportsImage?: boolean;
 };
 
+type QwenOAuthCredentials = {
+  access: string;
+  refresh?: string;
+  expires: number;
+  resourceUrl?: string;
+};
+
 type ProviderConfig = {
   enabled: boolean;
   apiKey: string;
   baseUrl: string;
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
+  oauthCredentials?: QwenOAuthCredentials;
   models?: ProviderModel[];
 };
 
@@ -270,7 +278,7 @@ function resolveMatchedProvider(
 
    // Check for API key or OAuth credentials
   const hasApiKey = providerConfig.apiKey?.trim();
-  const hasOAuthCreds = providerName === 'qwen' && (providerConfig as any).oauthCredentials;
+  const hasOAuthCreds = providerName === 'qwen' && providerConfig.oauthCredentials;
   if (apiFormat === 'anthropic' && providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim() && !hasApiKey && !hasOAuthCreds) {
     const serverFallback = tryWesightServerFallback(modelId);
     if (serverFallback) return { matched: serverFallback };
@@ -324,8 +332,8 @@ export function resolveCurrentApiConfig(
   let resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
   
   // Handle Qwen OAuth credentials
-  if (matched.providerName === 'qwen' && !resolvedApiKey && (matched.providerConfig as any).oauthCredentials) {
-    const oauthCreds = (matched.providerConfig as any).oauthCredentials;
+  if (matched.providerName === 'qwen' && !resolvedApiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
     // Check if token is still valid (with 5 minute buffer)
     const expiryBuffer = 5 * 60 * 1000;
     if (Date.now() < (oauthCreds.expires - expiryBuffer)) {
@@ -396,6 +404,124 @@ export function resolveCurrentApiConfig(
   };
 }
 
+export function resolveCodexWesightApiConfig(
+  target: OpenAICompatProxyTarget = 'local',
+  override: ApiConfigOverride = {},
+): ApiConfigResolution {
+  const sqliteStore = getStore();
+  if (!sqliteStore) {
+    return {
+      config: null,
+      error: 'Store is not initialized.',
+    };
+  }
+
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  if (!appConfig) {
+    return {
+      config: null,
+      error: 'Application config not found.',
+    };
+  }
+
+  const { matched, error } = resolveMatchedProvider(appConfig, override);
+  if (!matched) {
+    return {
+      config: null,
+      error,
+    };
+  }
+
+  let resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
+  if (matched.providerName === 'qwen' && !resolvedApiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
+    const expiryBuffer = 5 * 60 * 1000;
+    resolvedApiKey = oauthCreds.access || '';
+    if (Date.now() >= (oauthCreds.expires - expiryBuffer)) {
+      console.warn('Qwen OAuth token expired, please refresh credentials');
+    }
+  }
+
+  const effectiveApiKey = resolvedApiKey
+    || (!providerRequiresApiKey(matched.providerName) ? 'sk-wesight-local' : '');
+  const upstreamBaseURL = resolveCodexOpenAICompatibleBaseURL(matched);
+  if (!upstreamBaseURL) {
+    return {
+      config: null,
+      error: `Provider ${matched.providerName} does not have an OpenAI-compatible endpoint for Codex CLI.`,
+      providerMetadata: {
+        providerName: matched.providerName,
+        codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+        supportsImage: matched.supportsImage,
+        modelName: matched.modelName,
+      },
+    };
+  }
+
+  const proxyStatus = getCoworkOpenAICompatProxyStatus();
+  if (!proxyStatus.running) {
+    return {
+      config: null,
+      error: 'OpenAI compatibility proxy is not running.',
+      providerMetadata: {
+        providerName: matched.providerName,
+        codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+        supportsImage: matched.supportsImage,
+        modelName: matched.modelName,
+      },
+    };
+  }
+
+  configureCoworkOpenAICompatProxy({
+    baseURL: upstreamBaseURL,
+    apiKey: resolvedApiKey || undefined,
+    model: matched.modelId,
+    provider: matched.providerName,
+  });
+
+  const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL(target);
+  if (!proxyBaseURL) {
+    return {
+      config: null,
+      error: 'OpenAI compatibility proxy base URL is unavailable.',
+      providerMetadata: {
+        providerName: matched.providerName,
+        codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+        supportsImage: matched.supportsImage,
+        modelName: matched.modelName,
+      },
+    };
+  }
+
+  return {
+    config: {
+      apiKey: effectiveApiKey,
+      baseURL: proxyBaseURL,
+      model: matched.modelId,
+      apiType: 'openai',
+    },
+    providerMetadata: {
+      providerName: matched.providerName,
+      codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+      supportsImage: matched.supportsImage,
+      modelName: matched.modelName,
+    },
+  };
+}
+
+function resolveCodexOpenAICompatibleBaseURL(matched: MatchedProvider): string {
+  if (matched.providerConfig.codingPlanEnabled) {
+    const codingPlanUrl = ProviderRegistry.getCodingPlanUrl(matched.providerName, 'openai')?.trim();
+    if (codingPlanUrl) return codingPlanUrl;
+  }
+
+  if (matched.apiFormat === 'openai') {
+    return matched.baseURL.trim();
+  }
+
+  return ProviderRegistry.getSwitchableBaseUrl(matched.providerName, 'openai')?.trim() || '';
+}
+
 export function getCurrentApiConfig(
   target: OpenAICompatProxyTarget = 'local',
   override: ApiConfigOverride = {},
@@ -426,8 +552,8 @@ export function resolveRawApiConfig(override: ApiConfigOverride = {}): ApiConfig
   let effectiveApiFormat = matched.apiFormat;
   
   // Handle Qwen OAuth credentials for OpenClaw gateway
-  if (matched.providerName === 'qwen' && !apiKey && (matched.providerConfig as any).oauthCredentials) {
-    const oauthCreds = (matched.providerConfig as any).oauthCredentials;
+  if (matched.providerName === 'qwen' && !apiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
     // Check if token is still valid (with 5 minute buffer)
     const expiryBuffer = 5 * 60 * 1000;
     if (Date.now() < (oauthCreds.expires - expiryBuffer)) {
@@ -548,8 +674,8 @@ export function buildEnvForConfig(config: CoworkApiConfig): Record<string, strin
   baseEnv.WESIGHT_APIKEY_ACTIVE_PROVIDER = config.apiKey;
   baseEnv.LOBSTER_PROVIDER_API_KEY = config.apiKey;
 
+  delete baseEnv.ANTHROPIC_API_KEY;
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_API_KEY = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
   baseEnv.ANTHROPIC_MODEL = config.model;
   baseEnv.ANTHROPIC_REASONING_MODEL = config.model;

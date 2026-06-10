@@ -197,28 +197,10 @@ const calculateMeasuredOutputWindowMs = (record: RuntimeCallRecord): number | nu
   return Math.max(record.lastOutputAt - record.firstOutputAt, MIN_MEASURED_OUTPUT_WINDOW_MS);
 };
 
-const calculateRuntimeOutputWindowMs = (record: RuntimeCallRecord): number | null => {
-  const measuredWindowMs = calculateMeasuredOutputWindowMs(record);
-  if (measuredWindowMs) return measuredWindowMs;
-  if (record.firstOutputAt && record.completedAt && record.completedAt > record.firstOutputAt) {
-    return Math.max(record.completedAt - record.firstOutputAt, MIN_MEASURED_OUTPUT_WINDOW_MS);
-  }
-  if (record.durationMs && record.ttftMs !== null && record.ttftMs !== undefined) {
-    const postTtftMs = record.durationMs - record.ttftMs;
-    if (postTtftMs > 0) {
-      return Math.max(postTtftMs, MIN_MEASURED_OUTPUT_WINDOW_MS);
-    }
-  }
-  if (record.durationMs) {
-    return Math.max(record.durationMs, MIN_MEASURED_OUTPUT_WINDOW_MS);
-  }
-  return null;
-};
-
 export const calculateRuntimeTps = (record: RuntimeCallRecord): number | null => {
   const visibleOutputTokens = getVisibleOutputTokensForTps(record);
   if (!visibleOutputTokens) return null;
-  const outputWindowMs = calculateRuntimeOutputWindowMs(record);
+  const outputWindowMs = calculateMeasuredOutputWindowMs(record);
   if (!outputWindowMs) return null;
   const seconds = Math.max(outputWindowMs / 1000, MIN_MEASURED_OUTPUT_WINDOW_MS / 1000);
   return visibleOutputTokens / seconds;

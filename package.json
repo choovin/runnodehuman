@@ -6,17 +6,7 @@
     "email": "hello@wesight.ai"
   },
   "license": "MIT",
-  "version": "2026.6.2",
-  "runtimeManifest": {
-    "node": { "version": "22.11.0", "sha256": "c379a90c6aa605b74042a233ddcda4247b347ba5732007d280e44422cc8f9ecb" },
-    "python": { "version": "3.12.7", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "git": { "version": "2.47.1", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "gh": { "version": "2.65.0", "sha256": "5acb7110fa6f18d2e1a7bea41526bb8532584f4a10067b40217488bf9f3ad9ab" },
-    "claudecode": { "version": "1.0.0", "sha256": "1a13e9deff835389d69a9356f7d8957f55eba8f3fc3d800e6e9d6c702b488998" },
-    "codex": { "version": "0.138.0", "sha256": "aef3a3d77b038470120651b35c911053f0033ccbd1427eeff0d5fcf270b7009a" },
-    "hermes": { "version": "1.0.0", "sha256": "REPLACE_AFTER_FIRST_FETCH" },
-    "openclaw": { "version": "2026.6.1", "sha256": "e43ec41fd810c147775baa42692a2eb110e5233abb67534901c727866369a4bb" }
-  },
+  "version": "2026.6.10",
   "openclaw": {
     "version": "v2026.3.2",
     "repo": "https://github.com/openclaw/openclaw.git",
@@ -79,8 +69,7 @@
     "test": "vitest run",
     "test:node": "npm run compile:electron && node --test tests/*.test.mjs",
     "test:memory": "npm run compile:electron && node --test tests/memoryFileStructure.test.mjs",
-    "test:e2e": "npm run build && npm run compile:electron && playwright test",
-    "pretest": "npm rebuild better-sqlite3-multiple-ciphers",
+    "pretest": "npm rebuild better-sqlite3",
     "preview": "vite preview",
     "compile:electron": "tsc --project electron-tsconfig.json",
     "precompile:electron": "electron-builder install-app-deps",
@@ -93,14 +82,19 @@
     "electron:dev:openclaw": "npm run electron:dev",
     "electron:dev:hermes": "npm run electron:dev",
     "postinstall": "patch-package && electron-builder install-app-deps",
-    "setup-bundled-runtimes": "node scripts/setup-bundled-runtimes.cjs",
-    "pack": "npm run setup:python-runtime && npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills && electron-builder --dir",
-    "dist": "npm run setup:python-runtime && npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills && electron-builder",
-    "dist:mac": "npm run predist:mac && node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.json",
+    "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --dir",
+    "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs",
+    "dist:mac": "node scripts/run-electron-builder-with-date.cjs --mac --config electron-builder.json",
     "predist:mac": "npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills",
+    "dist:mac:x64": "npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --mac --x64",
+    "dist:mac:arm64": "npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --mac --arm64",
+    "dist:mac:universal": "npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --mac --universal",
+    "verify:mac:x64-artifact": "node scripts/verify-mac-artifact.cjs mac-x64",
+    "verify:mac:arm64-artifact": "node scripts/verify-mac-artifact.cjs mac-arm64",
     "predist:win": "npm run setup:python-runtime && npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills",
+    "dist:win": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --win --x64",
     "predist:linux": "npm run build && npm run setup-bundled-runtimes && npm run compile:electron && npm run build:skills",
-    "dist:linux": "npm run predist:linux && electron-builder --linux",
+    "dist:linux": "npm run build && npm run compile:electron && npm run build:skills && node scripts/run-electron-builder-with-date.cjs --linux",
     "clean:release": "rimraf release",
     "generate:tray-icons": "node scripts/generate-tray-icons.js",
     "generate:brand-assets": "node scripts/generate-brand-assets.cjs",
@@ -122,7 +116,8 @@
     "openclaw:runtime:linux-x64": "npm run openclaw:ensure && npm run openclaw:patch && node scripts/run-build-openclaw-runtime.cjs linux-x64 && node scripts/sync-openclaw-runtime-current.cjs linux-x64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:extensions:local && npm run openclaw:precompile && npm run openclaw:prune",
     "openclaw:runtime:linux-arm64": "npm run openclaw:ensure && npm run openclaw:patch && node scripts/run-build-openclaw-runtime.cjs linux-arm64 && node scripts/sync-openclaw-runtime-current.cjs linux-arm64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:extensions:local && npm run openclaw:precompile && npm run openclaw:prune",
     "regenerate:icon": "bash scripts/regenerate-mac-icon.sh",
-    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh"
+    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh",
+    "setup-bundled-runtimes": "node scripts/setup-bundled-runtimes.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.12",
@@ -137,7 +132,7 @@
     "@reduxjs/toolkit": "^2.2.1",
     "@types/uuid": "^10.0.0",
     "@wecom/wecom-aibot-sdk": "^0.1.0",
-    "better-sqlite3-multiple-ciphers": "^12.8.0",
+    "better-sqlite3": "^12.8.0",
     "bufferutil": "^4.1.0",
     "cheerio": "^1.2.0",
     "cron-parser": "^5.5.0",
@@ -150,7 +145,6 @@
     "katex": "^0.16.21",
     "mermaid": "^10.9.5",
     "nim-web-sdk-ng": "10.9.77-alpha.4",
-    "node-machine-id": "^1.1.12",
     "npm": "^11.11.0",
     "phaser": "^3.80.1",
     "qrcode.react": "^4.2.0",
@@ -178,8 +172,6 @@
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
     "@tailwindcss/typography": "^0.5.16",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/dompurify": "^3.0.5",
     "@types/extract-zip": "^2.0.1",
@@ -191,7 +183,6 @@
     "@types/yazl": "^3.3.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
-    "@playwright/test": "^1.49.0",
     "@vitejs/plugin-react": "^4.2.1",
     "7zip-bin": "^5.2.0",
     "autoprefixer": "^10.4.17",
@@ -206,7 +197,6 @@
     "eslint-plugin-react-refresh": "^0.4.26",
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "globals": "^17.4.0",
-    "happy-dom": "^15.11.7",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "patch-package": "^8.0.1",
@@ -221,5 +211,39 @@
     "vite-plugin-electron-renderer": "^0.14.5",
     "vitest": "^4.1.0",
     "wait-on": "^7.2.0"
+  },
+  "runtimeManifest": {
+    "node": {
+      "version": "22.11.0",
+      "sha256": "c379a90c6aa605b74042a233ddcda4247b347ba5732007d280e44422cc8f9ecb"
+    },
+    "python": {
+      "version": "3.12.7",
+      "sha256": "REPLACE_AFTER_FIRST_FETCH"
+    },
+    "git": {
+      "version": "2.47.1",
+      "sha256": "REPLACE_AFTER_FIRST_FETCH"
+    },
+    "gh": {
+      "version": "2.65.0",
+      "sha256": "5acb7110fa6f18d2e1a7bea41526bb8532584f4a10067b40217488bf9f3ad9ab"
+    },
+    "claudecode": {
+      "version": "1.0.0",
+      "sha256": "1a13e9deff835389d69a9356f7d8957f55eba8f3fc3d800e6e9d6c702b488998"
+    },
+    "codex": {
+      "version": "0.138.0",
+      "sha256": "aef3a3d77b038470120651b35c911053f0033ccbd1427eeff0d5fcf270b7009a"
+    },
+    "hermes": {
+      "version": "1.0.0",
+      "sha256": "REPLACE_AFTER_FIRST_FETCH"
+    },
+    "openclaw": {
+      "version": "2026.6.1",
+      "sha256": "e43ec41fd810c147775baa42692a2eb110e5233abb67534901c727866369a4bb"
+    }
   }
 }

@@ -17,6 +17,9 @@ import {
 import {
   mergeClaudeSettingsForWesightModel,
   mergeCodexConfigForWesightModel,
+  removeWesightManagedClaudeSettings,
+  writeJsonObjectWithBackupIfChanged,
+  writeTextFileWithBackupIfChanged,
 } from './externalAgentConfigSync';
 import { type CliAppType } from './externalAgentEnvironment';
 import { getClaudeCodeModelFromSettingsConfig } from './externalAgentLocalEnv';
@@ -808,6 +811,32 @@ export class ExternalAgentProviderStore {
     return Boolean(row.is_current);
   }
 
+  private selectFallbackProvider(appType: ExternalAgentProviderAppType): void {
+    const row = this.db
+      .prepare(
+        `
+        SELECT id FROM external_agent_providers
+        WHERE app_type = ?
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+      `,
+      )
+      .get(appType) as { id: string } | undefined;
+    if (row?.id) {
+      this.setCurrentProvider(appType, row.id);
+    }
+  }
+
+  private refreshLiveProviderSnapshot(appType: ExternalAgentProviderAppType): void {
+    if (this.importLiveProvider(appType)) {
+      return;
+    }
+    const deletedCurrentLiveSnapshot = this.deleteLiveProviderSnapshot(appType);
+    if (deletedCurrentLiveSnapshot) {
+      this.selectFallbackProvider(appType);
+    }
+  }
+
   private stripInternalSettingsConfig(settingsConfig: Record<string, unknown>): Record<string, unknown> {
     const next = { ...settingsConfig };
     delete next[INTERNAL_META_KEY];
@@ -937,11 +966,8 @@ export class ExternalAgentProviderStore {
         this.selectCcSwitchCurrentProvider(appType);
       }
     }
-    const hasAnyProvider = Boolean(this.db
-      .prepare('SELECT id FROM external_agent_providers WHERE app_type = ? LIMIT 1')
-      .get(appType));
-    if (!hasAnyProvider || imported === 0) {
-      this.importLiveProviderIfEmpty(appType);
+    if (imported === 0) {
+      this.refreshLiveProviderSnapshot(appType);
     }
   }
 
@@ -1200,7 +1226,8 @@ export class ExternalAgentProviderStore {
 
   private readLiveSettingsConfig(appType: ExternalAgentProviderAppType): Record<string, unknown> | null {
     if (appType === CLAUDE_APP_TYPE) {
-      return readJsonObject(getClaudeSettingsPath());
+      const settings = readJsonObject(getClaudeSettingsPath());
+      return settings ? removeWesightManagedClaudeSettings(settings) : null;
     }
     if (appType === OPENCODE_APP_TYPE) {
       const config = readJsonObject(getOpenCodeConfigPath());
@@ -1273,9 +1300,10 @@ export class ExternalAgentProviderStore {
     const settingsConfig = this.stripInternalSettingsConfig(provider.settingsConfig);
     this.writeCcSwitchCurrentProvider(provider.appType, provider);
     if (provider.appType === CLAUDE_APP_TYPE) {
-      const existingConfig = readJsonObject(getClaudeSettingsPath()) ?? {};
-      writeJsonFile(
-        getClaudeSettingsPath(),
+      const settingsPath = getClaudeSettingsPath();
+      const existingConfig = readJsonObject(settingsPath) ?? {};
+      writeJsonObjectWithBackupIfChanged(
+        settingsPath,
         mergeClaudeSettingsForWesightModel(existingConfig, {
           apiKey: provider.summary.apiKey,
           baseURL: provider.summary.baseUrl,
@@ -1416,7 +1444,7 @@ export class ExternalAgentProviderStore {
     const existingConfigText = fs.existsSync(getCodexConfigPath())
       ? fs.readFileSync(getCodexConfigPath(), 'utf8')
       : '';
-    atomicWrite(
+    writeTextFileWithBackupIfChanged(
       getCodexConfigPath(),
       mergeCodexConfigForWesightModel(
         existingConfigText,

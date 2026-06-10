@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Existing GitHub Release tag to upload Windows assets to'
-        required: true
-        default: 'v2026.6.2'
+        description: 'Existing GitHub Release tag to upload Windows assets to. Leave empty to use today, for example v2026.6.6.'
+        required: false
+        default: ''
       upload_to_release:
         description: 'Upload built Windows assets to the release'
         required: true
@@ -22,6 +22,8 @@ permissions:
 jobs:
   build-windows-x64:
     runs-on: windows-latest
+    outputs:
+      effective_release_tag: ${{ steps.build_metadata.outputs.effective_release_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +39,21 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Compute date-based build version
+        id: build_metadata
+        shell: pwsh
+        run: |
+          # Use UTC so artifact names and release tags are stable across runners.
+          $now = [DateTime]::UtcNow
+          $artifactDate = $now.ToString('yyyy.MM.dd')
+          $appVersion = '{0}.{1}.{2}' -f $now.Year, $now.Month, $now.Day
+          "WESIGHT_BUILD_DATE=$artifactDate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WESIGHT_APP_VERSION=$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EFFECTIVE_RELEASE_TAG=v$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "effective_release_tag=v$appVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Artifact date: $artifactDate"
+          Write-Host "App version: $appVersion"
 
       - name: Build Windows x64 installer
         run: npm run dist:win -- --publish never
@@ -78,7 +95,9 @@ jobs:
       - name: Upload Windows assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          EFFECTIVE_RELEASE_TAG: ${{ needs.build-windows-x64.outputs.effective_release_tag }}
         run: |
           set -euo pipefail
+          RELEASE_TAG="${INPUT_RELEASE_TAG:-$EFFECTIVE_RELEASE_TAG}"
           gh release upload "$RELEASE_TAG" artifacts/windows-x64-build/* --clobber --repo "$GITHUB_REPOSITORY"

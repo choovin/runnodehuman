@@ -50,6 +50,13 @@ interface PendingIMPermission {
   timeoutId?: NodeJS.Timeout;
 }
 
+interface TrackedSessionStatus {
+  tracked: boolean;
+  reason: string;
+  conversationId?: string;
+  platform?: Platform;
+}
+
 const PERMISSION_CONFIRM_TIMEOUT_MS = 60_000;
 const ACCUMULATOR_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const IM_ALLOW_RESPONSE_RE = /^(允许|同意|yes|y)$/i;
@@ -158,17 +165,45 @@ export class IMCoworkHandler extends EventEmitter {
   }
 
   private ensureTrackedSession(sessionId: string): boolean {
+    return this.getTrackedSessionStatus(sessionId).tracked;
+  }
+
+  private getTrackedSessionStatus(sessionId: string): TrackedSessionStatus {
     if (this.imSessionIds.has(sessionId)) {
-      return true;
+      const conversation = this.sessionConversationMap.get(sessionId);
+      return {
+        tracked: true,
+        reason: conversation ? 'already tracked' : 'already tracked without conversation mapping',
+        conversationId: conversation?.conversationId,
+        platform: conversation?.platform,
+      };
     }
 
     const mapping = this.imStore.getSessionMappingByCoworkSessionId(sessionId);
     if (!mapping) {
-      return false;
+      return {
+        tracked: false,
+        reason: 'not an IM mapped session',
+      };
+    }
+
+    const session = this.coworkStore.getSession(sessionId);
+    if (!session) {
+      return {
+        tracked: false,
+        reason: 'IM mapping points to a missing cowork session',
+        conversationId: mapping.imConversationId,
+        platform: mapping.platform,
+      };
     }
 
     this.trackSessionMapping(mapping);
-    return true;
+    return {
+      tracked: true,
+      reason: 'restored from IM mapping',
+      conversationId: mapping.imConversationId,
+      platform: mapping.platform,
+    };
   }
 
   /**
@@ -637,9 +672,9 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleMessage(sessionId: string, message: CoworkMessage): void {
     // Only process messages from IM sessions
-    const tracked = this.ensureTrackedSession(sessionId);
-    console.log('[IMCoworkHandler:handleMessage] sessionId:', sessionId, 'tracked:', tracked, 'messageType:', message.type);
-    if (!tracked) return;
+    const tracking = this.getTrackedSessionStatus(sessionId);
+    console.log('[IMCoworkHandler:handleMessage] sessionId:', sessionId, 'tracked:', tracking.tracked, 'reason:', tracking.reason, 'messageType:', message.type);
+    if (!tracking.tracked) return;
 
     const accumulator = this.messageAccumulators.get(sessionId) ?? this.ensureBackgroundAccumulator(sessionId, message);
     console.log('[IMCoworkHandler:handleMessage] accumulator exists:', !!accumulator, 'backgroundDelivery:', !!accumulator?.backgroundDelivery);
@@ -957,9 +992,10 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleComplete(sessionId: string): void {
     // Only process complete events from IM sessions
-    const tracked = this.ensureTrackedSession(sessionId);
-    console.log('[IMCoworkHandler:handleComplete] sessionId:', sessionId, 'tracked:', tracked, 'hasAccumulator:', this.messageAccumulators.has(sessionId));
-    if (!tracked) return;
+    const tracking = this.getTrackedSessionStatus(sessionId);
+    const hasAccumulator = this.messageAccumulators.has(sessionId);
+    console.log('[IMCoworkHandler:handleComplete] sessionId:', sessionId, 'tracked:', tracking.tracked, 'reason:', tracking.reason, 'hasAccumulator:', hasAccumulator);
+    if (!tracking.tracked) return;
 
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);

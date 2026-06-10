@@ -71,6 +71,8 @@ export interface ExternalAgentEnvironmentSnapshot {
 
 export interface CliProbeMetric {
   command: string;
+  path: string | null;
+  version: string | null;
   resolveMs: number;
   versionMs?: number;
   found: boolean;
@@ -110,6 +112,12 @@ type CcSwitchSettings = {
 type ProviderRow = {
   id: string;
   name: string;
+};
+
+type CliConfigSummary = {
+  providerId: string | null;
+  providerName: string | null;
+  count: number;
 };
 
 const homeDir = (): string => os.homedir();
@@ -255,9 +263,100 @@ const getQwenCodeConfigDir = (): string => path.join(homeDir(), '.qwen');
 
 const getDeepSeekTuiConfigDir = (): string => path.join(homeDir(), '.deepseek');
 
+const getNestedRecord = (value: unknown, key: string): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const nested = (value as Record<string, unknown>)[key];
+  return nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : {};
+};
+
+const getString = (value: unknown): string => {
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const extractTomlString = (configText: string, key: string): string => {
+  const match = configText.match(new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']*)["']`, 'm'));
+  return match?.[1]?.trim() ?? '';
+};
+
+const normalizeTomlTableKey = (value: string): string => {
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+};
+
+const listCodexModelProviderIds = (configText: string): string[] => {
+  const ids = new Set<string>();
+  const tablePattern = /^\s*\[model_providers\.([^\]]+)\]\s*$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(configText)) !== null) {
+    const id = normalizeTomlTableKey(match[1] ?? '');
+    if (id) ids.add(id);
+  }
+  return [...ids];
+};
+
+const readCodexModelProviderBody = (configText: string, providerId: string): string => {
+  const escapedProviderId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tableMatch = configText.match(
+    new RegExp(`^\\s*\\[model_providers\\.(?:"${escapedProviderId}"|'${escapedProviderId}'|${escapedProviderId})\\]\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n\\s*\\[|$)`, 'm'),
+  );
+  return tableMatch?.[1] ?? '';
+};
+
+const readClaudeNativeConfigSummary = (settingsPath: string): CliConfigSummary => {
+  const settings = readJsonObject(settingsPath);
+  if (!settings) return { providerId: null, providerName: null, count: 0 };
+  const env = getNestedRecord(settings, 'env');
+  const apiKey = getString(env.ANTHROPIC_AUTH_TOKEN) || getString(env.ANTHROPIC_API_KEY);
+  const baseUrl = getString(env.ANTHROPIC_BASE_URL);
+  const model = getString(env.ANTHROPIC_MODEL)
+    || getString(env.ANTHROPIC_DEFAULT_SONNET_MODEL)
+    || getString(env.ANTHROPIC_DEFAULT_OPUS_MODEL)
+    || getString(env.ANTHROPIC_DEFAULT_HAIKU_MODEL)
+    || getString(env.ANTHROPIC_SMALL_FAST_MODEL);
+  if (!isNonPlaceholderSecret(apiKey) || (!baseUrl && !model)) {
+    return { providerId: null, providerName: model || null, count: 0 };
+  }
+  return {
+    providerId: 'local-live',
+    providerName: 'Local Claude Code',
+    count: 1,
+  };
+};
+
+const readCodexNativeConfigSummary = (
+  configPath: string,
+  authPath: string,
+): CliConfigSummary => {
+  const configText = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
+  const modelProvider = extractTomlString(configText, 'model_provider');
+  const model = extractTomlString(configText, 'model');
+  const providerIds = listCodexModelProviderIds(configText);
+  const providerBody = modelProvider ? readCodexModelProviderBody(configText, modelProvider) : '';
+  const providerName = extractTomlString(providerBody, 'name') || modelProvider || model || null;
+  if (providerIds.length > 0) {
+    return {
+      providerId: modelProvider || providerIds[0] || null,
+      providerName,
+      count: providerIds.length,
+    };
+  }
+  if (modelProvider || model || fileContainsCredential(authPath)) {
+    return {
+      providerId: modelProvider || 'local-live',
+      providerName: providerName || 'Local Codex',
+      count: 1,
+    };
+  }
+  return { providerId: null, providerName: null, count: 0 };
+};
+
 const readOpenCodeConfigSummary = (
   configPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   const config = readJsonObject(configPath);
   if (!config) {
     return { providerId: null, providerName: null, count: 0 };
@@ -279,7 +378,7 @@ const readOpenCodeConfigSummary = (
 
 const readQwenCodeConfigSummary = (
   configPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   const config = readJsonObject(configPath);
   if (!config) {
     return { providerId: null, providerName: null, count: 0 };
@@ -309,7 +408,7 @@ const readQwenCodeConfigSummary = (
 
 const readDeepSeekTuiConfigSummary = (
   configPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   if (!fs.existsSync(configPath)) {
     return { providerId: null, providerName: null, count: 0 };
   }
@@ -325,7 +424,7 @@ const readDeepSeekTuiConfigSummary = (
 
 const readGrokBuildConfigSummary = (
   configPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   if (!fs.existsSync(configPath)) {
     return { providerId: null, providerName: null, count: 0 };
   }
@@ -340,7 +439,7 @@ const readGrokBuildConfigSummary = (
 const readHermesConfigSummary = (
   configPath: string,
   envPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   if (!fs.existsSync(configPath)) {
     return { providerId: null, providerName: null, count: 0 };
   }
@@ -359,7 +458,7 @@ const readHermesConfigSummary = (
 
 const readOpenClawConfigSummary = (
   configPath: string,
-): { providerId: string | null; providerName: string | null; count: number } => {
+): CliConfigSummary => {
   const summary = summarizeOpenClawConfig(readOpenClawGlobalConfig(configPath));
   const model = summary.currentModel;
   return {
@@ -532,7 +631,7 @@ interface CommandResult {
   error: string | null;
 }
 
-interface CommandResolution {
+export interface CliCommandResolution {
   found: boolean;
   path: string | null;
   error: string | null;
@@ -642,9 +741,13 @@ const getWindowsSearchPaths = (command: string): string[] => {
   }
   if (command === 'claude') {
     return [
+      localAppData
+        ? path.join(localAppData, 'Programs', 'Claude', 'claude.exe')
+        : null,
       path.join(appData, 'npm', 'claude.cmd'),
+      path.join(home, 'AppData', 'Local', 'Programs', 'Claude', 'claude.exe'),
       path.join(home, '.local', 'bin', 'claude.exe'),
-    ];
+    ].filter((candidate): candidate is string => Boolean(candidate));
   }
   if (command === 'codex') {
     return [
@@ -679,6 +782,14 @@ const getWindowsSearchPaths = (command: string): string[] => {
   return [];
 };
 
+const isWindowsNetworkPath = (candidate: string): boolean => (
+  /^\\\\/.test(candidate)
+);
+
+const isSafeWindowsFastProbePath = (candidate: string): boolean => (
+  !isWindowsNetworkPath(candidate)
+);
+
 const preferWindowsExecutable = (candidates: string[]): string | null => {
   if (candidates.length === 0) return null;
   return candidates.find((candidate) => /\.(cmd|exe|bat)$/i.test(candidate))
@@ -686,21 +797,21 @@ const preferWindowsExecutable = (candidates: string[]): string | null => {
     ?? null;
 };
 
-const isWindowsCommandShim = (commandPath: string): boolean => {
+export const isWindowsCommandShim = (commandPath: string): boolean => {
   return process.platform === 'win32' && /\.(cmd|bat)$/i.test(commandPath);
 };
 
-const buildWindowsCommandShimArgs = (commandPath: string, args: string[]): string[] => {
+export const buildWindowsCommandShimArgs = (commandPath: string, args: string[]): string[] => {
   return ['/d', '/s', '/c', `call "${commandPath}" ${args.map((arg) => `"${arg.replace(/"/g, '\\"')}"`).join(' ')}`];
 };
 
-const resolveCommand = async (
+export const resolveCliCommand = async (
   command: string,
   options: ExternalAgentEnvironmentProbeOptions = {},
-): Promise<CommandResolution> => {
+): Promise<CliCommandResolution> => {
   if (process.platform === 'win32') {
     for (const candidate of getWindowsSearchPaths(command)) {
-      if (candidate && fs.existsSync(candidate)) {
+      if (candidate && isSafeWindowsFastProbePath(candidate) && fs.existsSync(candidate)) {
         return { found: true, path: candidate, error: null, timedOut: false };
       }
     }
@@ -905,6 +1016,13 @@ const buildCliConfigSnapshot = (
     };
   }
   const { provider, count } = readCurrentProviderFromDb(dbPath, appType, settingsCurrentProviderId);
+  const nativeSummary = !provider && count === 0
+    ? appType === 'claude'
+      ? readClaudeNativeConfigSummary(primaryConfigPath)
+      : appType === 'codex'
+        ? readCodexNativeConfigSummary(primaryConfigPath, secondaryConfigPaths[0] || path.join(configDir, 'auth.json'))
+        : { providerId: null, providerName: null, count: 0 }
+    : { providerId: null, providerName: null, count: 0 };
 
   return {
     appType,
@@ -912,9 +1030,9 @@ const buildCliConfigSnapshot = (
     primaryConfigPath,
     secondaryConfigPaths,
     configExists: fs.existsSync(primaryConfigPath),
-    currentProviderId: provider?.id ?? settingsCurrentProviderId,
-    currentProviderName: provider?.name ?? null,
-    providerCount: count,
+    currentProviderId: provider?.id ?? settingsCurrentProviderId ?? nativeSummary.providerId,
+    currentProviderName: provider?.name ?? nativeSummary.providerName,
+    providerCount: count || nativeSummary.count,
   };
 };
 
@@ -928,7 +1046,7 @@ const buildCommandStatus = (
 ): Promise<{ status: CliCommandStatus; metric: CliProbeMetric }> => (
   (async () => {
     const resolveStartedAt = Date.now();
-    const resolution = await resolveCommand(command, options);
+    const resolution = await resolveCliCommand(command, options);
     const resolveMs = Date.now() - resolveStartedAt;
     const versionResult = resolution.found
       ? await readCommandVersion(resolution.path ?? command, appType, options)
@@ -949,6 +1067,8 @@ const buildCommandStatus = (
       },
       metric: {
         command,
+        path: resolution.path,
+        version: versionResult.version,
         resolveMs,
         versionMs: versionResult.durationMs,
         found: resolution.found,

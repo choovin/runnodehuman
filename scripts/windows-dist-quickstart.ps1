@@ -114,7 +114,7 @@ Write-Section '8/8 Installer output'
 $installer = if ($InstallerPath) {
   Resolve-Path $InstallerPath
 } else {
-  Get-ChildItem 'release/WeSight Setup *.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  Get-ChildItem 'release/WeSight.Setup.*.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
 
 if ($installer) {

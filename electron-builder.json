@@ -62,7 +62,7 @@
     "target": [
       "dmg"
     ],
-    "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+    "artifactName": "${productName}.${env.WESIGHT_BUILD_DATE}.mac.${arch}.${ext}",
     "icon": "build/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
@@ -144,6 +144,7 @@
       "AppImage",
       "deb"
     ],
+    "artifactName": "${productName}.${env.WESIGHT_BUILD_DATE}.linux.${arch}.${ext}",
     "icon": "build/icons/png",
     "category": "Utility",
     "extraResources": [
@@ -195,6 +196,7 @@
     }
   },
   "nsis": {
+    "artifactName": "${productName}.Setup.${env.WESIGHT_BUILD_DATE}.${ext}",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "runAfterFinish": true,

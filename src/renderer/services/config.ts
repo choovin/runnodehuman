@@ -86,7 +86,7 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
   if ('custom' in providers && !isCustomProvider('custom')) {
     const legacyCustom = providers['custom'];
     if (legacyCustom) {
-      const updatedProviders = { ...providers } as Record<string, any>;
+      const updatedProviders: Record<string, NonNullable<AppConfig['providers']>[string]> = { ...providers };
       updatedProviders['custom_0'] = { ...legacyCustom };
       delete updatedProviders['custom'];
       return {
@@ -102,8 +102,12 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
 // Model IDs that have been removed from specific providers.
 // These will be filtered out from saved configs during migration.
 const REMOVED_PROVIDER_MODELS: Record<string, string[]> = {
-  deepseek: ['deepseek-chat'],
-  openai: ['gpt-5.2-2025-12-11'],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v3.2-exp'],
+  openai: ['gpt-5.2-2025-12-11', 'gpt-5.2'],
+  'github-copilot': ['gpt-4o'],
+  minimax: ['MiniMax-M2.5', 'MiniMax-text-01', 'abab7-chat-preview'],
+  zhipu: ['glm-4.5', 'glm-4.6'],
+  moonshot: ['kimi-k2.5'],
 };
 
 // Models to inject into existing saved configs (for existing users).
@@ -113,17 +117,73 @@ const REMOVED_PROVIDER_MODELS: Record<string, string[]> = {
 // so the models follow normal user-editable behavior (same as other models).
 // position: 'start' inserts at the beginning, 'end' appends at the end.
 const ADDED_PROVIDER_MODELS: Record<string, { models: Array<{ id: string; name: string; supportsImage?: boolean }>; position: 'start' | 'end' }> = {
+  deepseek: {
+    models: [
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false },
+    ],
+    position: 'start',
+  },
   minimax: {
     models: [
-      { id: 'MiniMax-M2.7', name: 'MiniMax M2.7', supportsImage: false },
+      { id: 'MiniMax-M3', name: 'MiniMax M3', supportsImage: false },
+    ],
+    position: 'start',
+  },
+  zhipu: {
+    models: [
+      { id: 'glm-5.1', name: 'GLM 5.1', supportsImage: false },
+      { id: 'glm-4.7-flash', name: 'GLM 4.7 Flash', supportsImage: false },
+    ],
+    position: 'start',
+  },
+  xiaomi: {
+    models: [
+      { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', supportsImage: false },
+      { id: 'mimo-v2-pro', name: 'MiMo V2 Pro', supportsImage: false },
+    ],
+    position: 'start',
+  },
+  anthropic: {
+    models: [
+      { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', supportsImage: true },
+      { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', supportsImage: true },
+    ],
+    position: 'start',
+  },
+  'github-copilot': {
+    models: [
+      { id: 'gpt-5', name: 'GPT-5', supportsImage: true },
+      { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', supportsImage: true },
+      { id: 'claude-opus-4.8', name: 'Claude Opus 4.8', supportsImage: true },
+      { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', supportsImage: true },
     ],
     position: 'start',
   },
   openai: {
     models: [
-      { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
-      { id: 'gpt-5.2', name: 'GPT-5.2', supportsImage: true },
-      { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', supportsImage: true },
+      { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', supportsImage: true },
+    ],
+    position: 'start',
+  },
+  moonshot: {
+    models: [
+      { id: 'kimi-k2.6', name: 'Kimi K2.6', supportsImage: true },
+    ],
+    position: 'start',
+  },
+  qwen: {
+    models: [
+      { id: 'qwen3-max', name: 'Qwen3 Max', supportsImage: true },
+      { id: 'qwen3-coder-480b-a35b-instruct', name: 'Qwen3 Coder 480B', supportsImage: false },
+    ],
+    position: 'start',
+  },
+  gemini: {
+    models: [
+      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', supportsImage: true },
+      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', supportsImage: true },
     ],
     position: 'start',
   },
@@ -145,7 +205,7 @@ class ConfigService {
                 providerKey,
                 (() => {
                   const mergedProvider = {
-                    ...(defaultConfig.providers as Record<string, any>)?.[providerKey],
+                    ...(defaultConfig.providers as NonNullable<AppConfig['providers']>)?.[providerKey],
                     ...providerConfig,
                   };
                   // Filter out removed models

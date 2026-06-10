@@ -162,14 +162,25 @@
   DetailPrint "[1/4] Starting WeSight uninstall cleanup..."
 
   ; Remove the Defender exclusion if a previous trusted build added it. This
-  ; is intentionally best-effort so uninstall still succeeds on locked-down
-  ; machines or builds that never enabled the exclusion.
-  DetailPrint "[2/4] Removing optional Windows Defender exclusion..."
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction SilentlyContinue; Write-Output ok } catch { Write-Output skip }"'
-  Pop $0
-  Pop $1
-  FileWrite $2 "defender-exclusion-remove: exit=$0 result=$1$\r$\n"
-  DetailPrint "[2/4] Defender cleanup result: $1"
+  ; is intentionally best-effort and bounded so uninstall still succeeds on
+  ; locked-down machines or builds that never enabled the exclusion.
+  IfFileExists "$INSTDIR\resources\.wesight-defender-exclusion" 0 DefenderCleanupSkip
+    DetailPrint "[2/4] Removing optional Windows Defender exclusion..."
+    nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "\
+      try {\
+        $$job = Start-Job -ScriptBlock { param($$path) Remove-MpPreference -ExclusionPath $$path -ErrorAction SilentlyContinue } -ArgumentList $\"$INSTDIR\resources\cfmind$\";\
+        if (Wait-Job $$job -Timeout 5) { Receive-Job $$job | Out-Null; Remove-Job $$job -Force; Write-Output ok }\
+        else { Stop-Job $$job -ErrorAction SilentlyContinue; Remove-Job $$job -Force -ErrorAction SilentlyContinue; Write-Output timeout }\
+      } catch { Write-Output skip }"'
+    Pop $0
+    Pop $1
+    FileWrite $2 "defender-exclusion-remove: exit=$0 result=$1$\r$\n"
+    DetailPrint "[2/4] Defender cleanup result: $1"
+    Goto DefenderCleanupDone
+  DefenderCleanupSkip:
+    FileWrite $2 "defender-exclusion-remove: skipped-no-marker$\r$\n"
+    DetailPrint "[2/4] Defender cleanup skipped."
+  DefenderCleanupDone:
 
   ; Clear Windows auto-launch leftovers that point to this installation. The
   ; app currently uses Electron login items, but this also handles future Task
@@ -190,11 +201,20 @@
   FileWrite $2 "auto-launch-cleanup: exit=$0 result=$1$\r$\n"
   DetailPrint "[3/4] Auto-launch cleanup result: $1"
 
-  ; Remove leftover installer resource files if an interrupted install left
-  ; them behind. The main install directory is removed by electron-builder.
-  DetailPrint "[4/4] Removing leftover installer resource files..."
+  ; Remove large bundled resource directories early. These directories contain
+  ; many files and can make NSIS file-by-file cleanup feel stuck.
+  DetailPrint "[4/4] Removing bundled resource directories..."
+  DetailPrint "[4/4] Removing resources\cfmind..."
+  RMDir /r "$INSTDIR\resources\cfmind"
+  DetailPrint "[4/4] Removing resources\SKILLs..."
+  RMDir /r "$INSTDIR\resources\SKILLs"
+  DetailPrint "[4/4] Removing resources\python-win..."
+  RMDir /r "$INSTDIR\resources\python-win"
+  DetailPrint "[4/4] Removing resources\app.asar.unpacked..."
+  RMDir /r "$INSTDIR\resources\app.asar.unpacked"
   Delete "$INSTDIR\resources\win-resources.tar"
   Delete "$INSTDIR\resources\unpack-cfmind.cjs"
+  Delete "$INSTDIR\resources\.wesight-defender-exclusion"
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "cleanup-done: $5-$4-$3 $6:$7:$8$\r$\n"

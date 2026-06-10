@@ -3,7 +3,10 @@ import {
   ChevronDownIcon,
   CpuChipIcon,
 } from '@heroicons/react/24/outline';
-import { CoworkAgentEngine } from '@shared/cowork/constants';
+import {
+  CoworkAgentEngine,
+  ExternalAgentConfigSource,
+} from '@shared/cowork/constants';
 import React from 'react';
 import { useSelector } from 'react-redux';
 
@@ -14,6 +17,7 @@ import type {
   CoworkAgentEngine as CoworkAgentEngineType,
   ExternalAgentEnvironmentSnapshot,
   ExternalAgentProviderAppType,
+  ExternalAgentProviderListResult,
 } from '../../types/cowork';
 
 interface CoworkEngineSelectorProps {
@@ -141,6 +145,38 @@ const getCliAppTypeForEngine = (engine: CoworkAgentEngineType): ExternalAgentPro
   return null;
 };
 
+const ALL_CLI_APP_TYPES: ExternalAgentProviderAppType[] = [
+  'openclaw',
+  'hermes',
+  'claude',
+  'codex',
+  'opencode',
+  'grok',
+  'qwen',
+  'deepseek_tui',
+];
+
+/**
+ * Partial refreshes only include the requested app types. Keep previous engine
+ * entries for omitted app types, and let next overwrite matching app types.
+ */
+const mergeSnapshots = (
+  previous: ExternalAgentEnvironmentSnapshot | null,
+  next: ExternalAgentEnvironmentSnapshot,
+): ExternalAgentEnvironmentSnapshot => {
+  if (!previous) return next;
+  const enginesByAppType = new Map<ExternalAgentProviderAppType, ExternalAgentEnvironmentSnapshot['engines'][number]>();
+  previous.engines.forEach((engine) => enginesByAppType.set(engine.appType, engine));
+  next.engines.forEach((engine) => enginesByAppType.set(engine.appType, engine));
+  return {
+    ...previous,
+    ...next,
+    engines: ALL_CLI_APP_TYPES
+      .map((appType) => enginesByAppType.get(appType))
+      .filter((engine): engine is ExternalAgentEnvironmentSnapshot['engines'][number] => Boolean(engine)),
+  };
+};
+
 const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
   dropdownDirection = 'down',
   value,
@@ -148,14 +184,15 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
   readOnlyTitle,
 }) => {
   const selectedEngine = useSelector((state: RootState) => state.cowork.config.agentEngine);
+  const coworkConfig = useSelector((state: RootState) => state.cowork.config);
   const effectiveEngine = value ?? selectedEngine;
   const [isOpen, setIsOpen] = React.useState(false);
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [pendingEngine, setPendingEngine] = React.useState<CoworkAgentEngineType | null>(null);
   const [switchError, setSwitchError] = React.useState<string | null>(null);
   const [snapshot, setSnapshot] = React.useState<ExternalAgentEnvironmentSnapshot | null>(null);
+  const [providerLists, setProviderLists] = React.useState<Partial<Record<ExternalAgentProviderAppType, ExternalAgentProviderListResult>>>({});
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const hasRequestedOpenRefreshRef = React.useRef(false);
   const mountedRef = React.useRef(true);
 
   const selectedOption = ENGINE_OPTIONS.find((option) => option.engine === effectiveEngine)
@@ -165,18 +202,50 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
     [effectiveEngine],
   );
 
-  const refreshSnapshot = React.useCallback((options: { forceRefresh?: boolean } = {}) => {
-    if (!effectiveAppType) {
+  const getConfigSourceForEngine = React.useCallback((engine: CoworkAgentEngineType) => {
+    if (engine === CoworkAgentEngine.OpenClaw) return coworkConfig.openclawConfigSource;
+    if (engine === CoworkAgentEngine.ClaudeCode) return coworkConfig.claudeCodeConfigSource;
+    if (engine === CoworkAgentEngine.Codex) return coworkConfig.codexConfigSource;
+    if (engine === CoworkAgentEngine.Hermes) return coworkConfig.hermesConfigSource;
+    if (engine === CoworkAgentEngine.OpenCode) return coworkConfig.opencodeConfigSource;
+    if (engine === CoworkAgentEngine.GrokBuild) return ExternalAgentConfigSource.LocalCli;
+    if (engine === CoworkAgentEngine.QwenCode) return coworkConfig.qwenCodeConfigSource;
+    if (engine === CoworkAgentEngine.DeepSeekTui) return coworkConfig.deepseekTuiConfigSource;
+    return ExternalAgentConfigSource.WesightModel;
+  }, [coworkConfig]);
+
+  const loadProviderList = React.useCallback(async (appType: ExternalAgentProviderAppType) => {
+    const result = await coworkService.listAgentProviders(appType);
+    if (!mountedRef.current || !result.success) return;
+    setProviderLists((prev) => ({
+      ...prev,
+      [appType]: result,
+    }));
+  }, []);
+
+  const refreshLocalProviderLists = React.useCallback(() => {
+    const appTypes = ENGINE_OPTIONS
+      .filter((option) => getConfigSourceForEngine(option.engine) === ExternalAgentConfigSource.LocalCli)
+      .map((option) => getCliAppTypeForEngine(option.engine))
+      .filter((appType): appType is ExternalAgentProviderAppType => Boolean(appType));
+    Array.from(new Set(appTypes)).forEach((appType) => {
+      void loadProviderList(appType);
+    });
+  }, [getConfigSourceForEngine, loadProviderList]);
+
+  const refreshSnapshot = React.useCallback((options: { forceRefresh?: boolean; appTypes?: ExternalAgentProviderAppType[] } = {}) => {
+    const appTypes = options.appTypes ?? (effectiveAppType ? [effectiveAppType] : []);
+    if (appTypes.length === 0) {
       setSnapshot(null);
       return Promise.resolve();
     }
     return coworkService.getAgentEngineSnapshot({
       ...options,
-      appTypes: [effectiveAppType],
+      appTypes,
     })
       .then((nextSnapshot) => {
         if (mountedRef.current && nextSnapshot) {
-          setSnapshot(nextSnapshot);
+          setSnapshot((previous) => mergeSnapshots(previous, nextSnapshot));
         }
       })
       .catch(() => {
@@ -191,7 +260,7 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
     void refreshSnapshot();
     const unsubscribe = coworkService.onAgentEnginesChanged((nextSnapshot) => {
       if (mountedRef.current) {
-        setSnapshot(nextSnapshot);
+        setSnapshot((previous) => mergeSnapshots(previous, nextSnapshot));
       }
     });
 
@@ -202,12 +271,38 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
   }, [refreshSnapshot]);
 
   React.useEffect(() => {
-    if (!isOpen || readOnly || hasRequestedOpenRefreshRef.current) {
+    if (!isOpen || readOnly) {
       return;
     }
-    hasRequestedOpenRefreshRef.current = true;
-    void refreshSnapshot({ forceRefresh: true });
-  }, [isOpen, readOnly, refreshSnapshot]);
+    void refreshSnapshot({ forceRefresh: true, appTypes: ALL_CLI_APP_TYPES });
+    refreshLocalProviderLists();
+  }, [isOpen, readOnly, refreshLocalProviderLists, refreshSnapshot]);
+
+  React.useEffect(() => {
+    if (!effectiveAppType || readOnly) {
+      return;
+    }
+    if (getConfigSourceForEngine(effectiveEngine) === ExternalAgentConfigSource.LocalCli) {
+      void loadProviderList(effectiveAppType);
+    }
+  }, [effectiveAppType, effectiveEngine, getConfigSourceForEngine, loadProviderList, readOnly]);
+
+  React.useEffect(() => {
+    const handleProviderChanged = (event: Event) => {
+      const appType = (event as CustomEvent<{ appType?: ExternalAgentProviderAppType }>).detail?.appType;
+      if (appType) {
+        void loadProviderList(appType);
+        void refreshSnapshot({ forceRefresh: true, appTypes: [appType] });
+      } else {
+        refreshLocalProviderLists();
+        void refreshSnapshot({ forceRefresh: true, appTypes: ALL_CLI_APP_TYPES });
+      }
+    };
+    window.addEventListener('wesight-agent-provider-changed', handleProviderChanged);
+    return () => {
+      window.removeEventListener('wesight-agent-provider-changed', handleProviderChanged);
+    };
+  }, [loadProviderList, refreshLocalProviderLists, refreshSnapshot]);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -245,7 +340,14 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
           const nextSnapshot = await coworkService.getAgentEngineSnapshot({
             appTypes: [appType],
           });
-          setSnapshot(nextSnapshot);
+          if (nextSnapshot) {
+            setSnapshot((previous) => mergeSnapshots(previous, nextSnapshot));
+          } else {
+            setSnapshot(null);
+          }
+          if (getConfigSourceForEngine(engine) === ExternalAgentConfigSource.LocalCli) {
+            void loadProviderList(appType);
+          }
         } else {
           setSnapshot(null);
         }
@@ -261,6 +363,34 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
 
   const getCliStatus = (engine: CoworkAgentEngineType) => {
     return snapshot?.engines.find((item) => item.engine === engine) ?? null;
+  };
+
+  const getCurrentProvider = (appType: ExternalAgentProviderAppType) => {
+    const list = providerLists[appType];
+    const providers = list?.providers ?? [];
+    const currentProviderId = list?.currentProviderId;
+    if (currentProviderId) {
+      return providers.find((provider) => provider.id === currentProviderId) ?? null;
+    }
+    return providers.find((provider) => provider.isCurrent)
+      ?? providers[0]
+      ?? null;
+  };
+
+  const getConfigSummary = (engine: CoworkAgentEngineType, status: CliEngineStatus | null): string | null => {
+    const configSource = getConfigSourceForEngine(engine);
+    if (!isCliEngine(engine)) return null;
+    if (configSource !== ExternalAgentConfigSource.LocalCli) {
+      return i18nService.t('coworkAgentConfigSourceWesightModel');
+    }
+    const appType = getCliAppTypeForEngine(engine);
+    const provider = appType ? getCurrentProvider(appType) : null;
+    const providerLabel = provider
+      ? [provider.name, provider.summary.model].filter(Boolean).join(' · ')
+      : status?.config.currentProviderName
+        || status?.config.currentProviderId
+        || i18nService.t('coworkAgentLocalModelUnknown');
+    return `${i18nService.t('coworkAgentConfigSourceLocalCli')} · ${providerLabel}`;
   };
 
   const renderCliStatus = (engine: CoworkAgentEngineType) => {
@@ -280,25 +410,40 @@ const CoworkEngineSelector: React.FC<CoworkEngineSelectorProps> = ({
     }
     const status = getCliStatus(engine);
     if (!isCliEngine(engine) || !status) return null;
+    const configSummary = getConfigSummary(engine, status);
     if (!status.found) {
       return (
-        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          <span className="truncate">
-            {i18nService.t(status.checking ? 'coworkAgentEngineCliChecking' : 'coworkAgentEngineCliMissing')}
-          </span>
-        </div>
+        <>
+          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            <span className="truncate">
+              {i18nService.t(status.checking ? 'coworkAgentEngineCliChecking' : 'coworkAgentEngineCliMissing')}
+            </span>
+          </div>
+          {configSummary && (
+            <div className="mt-0.5 truncate text-[11px] text-secondary" title={configSummary}>
+              {configSummary}
+            </div>
+          )}
+        </>
       );
     }
     const authMeta = resolveAuthMeta(status);
     return (
-      <div className={`mt-1 flex items-center gap-1.5 text-[11px] ${authMeta.textClass}`}>
-        <span className={`h-1.5 w-1.5 rounded-full ${authMeta.dotClass}`} />
-        <span className="truncate" title={status.authSource || status.version || undefined}>
-          {i18nService.t(authMeta.labelKey)}
-          {status.version ? ` · ${status.version}` : ''}
-        </span>
-      </div>
+      <>
+        <div className={`mt-1 flex items-center gap-1.5 text-[11px] ${authMeta.textClass}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${authMeta.dotClass}`} />
+          <span className="truncate" title={status.authSource || status.version || undefined}>
+            {i18nService.t(authMeta.labelKey)}
+            {status.version ? ` · ${status.version}` : ''}
+          </span>
+        </div>
+        {configSummary && (
+          <div className="mt-0.5 truncate text-[11px] text-secondary" title={configSummary}>
+            {configSummary}
+          </div>
+        )}
+      </>
     );
   };
 

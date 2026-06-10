@@ -1,5 +1,7 @@
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { AgentRunTargetType, CoworkAgentEngine, DefaultAgent, ExternalAgentConfigSource } from '@shared/cowork/constants';
+import type { CoworkModelOverride } from '@shared/cowork/runtimeSnapshot';
+import { buildFallbackSessionTitle } from '@shared/cowork/sessionTitle';
 import React, { useEffect, useRef,useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
 
@@ -104,6 +106,18 @@ const getCliAppTypeForEngine = (engine: CoworkAgentEngine): ExternalAgentProvide
   if (engine === CoworkAgentEngine.QwenCode) return 'qwen';
   if (engine === CoworkAgentEngine.DeepSeekTui) return 'deepseek_tui';
   return null;
+};
+
+const buildSelectedModelOverride = (
+  model: RootState['model']['selectedModel'] | null | undefined,
+): CoworkModelOverride | null => {
+  if (!model?.id) return null;
+  return {
+    modelId: model.id,
+    modelName: model.name || model.id,
+    providerKey: model.providerKey ?? null,
+    providerName: model.provider ?? null,
+  };
 };
 
 const getEngineLabelKey = (engine: CoworkAgentEngine): string => {
@@ -331,7 +345,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       unsubscribe();
       unsubscribeOpenClawStatus();
     };
-  }, [dispatch]);
+  }, [dispatch, onRequestAppSettings, selectedRuntimeEngine]);
 
   const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]): Promise<boolean | void> => {
     // Prevent duplicate submissions
@@ -378,7 +392,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       // Create a temporary session with user message to show immediately
       const tempSessionId = `temp-${Date.now()}`;
-      const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || i18nService.t('coworkNewSession');
+      const fallbackTitle = buildFallbackSessionTitle(prompt, i18nService.t('coworkNewSession'));
       const now = Date.now();
 
       // Capture active skill IDs before clearing them
@@ -447,6 +461,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
         teamId: currentTargetType === AgentRunTargetType.Team && currentTeamId ? currentTeamId : undefined,
+        modelOverride: buildSelectedModelOverride(selectedModel),
         imageAttachments,
       });
 
@@ -537,6 +552,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         prompt,
         systemPrompt: combinedSystemPrompt,
         activeSkillIds: sessionSkillIds.length > 0 ? sessionSkillIds : undefined,
+        modelOverride: buildSelectedModelOverride(selectedModel),
         imageAttachments,
       });
     } finally {
@@ -681,17 +697,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     const normalizedCommand = command.toLowerCase();
     switch (normalizedCommand) {
       case '/model':
-        if (currentSession) {
-          const runtime = currentSession.runtimeSnapshot;
-          showSlashToast(
-            runtime
-              ? i18nService.t('coworkRuntimeLockedToast')
-                .replace('{engine}', runtime.engineLabel)
-                .replace('{model}', runtime.modelLabel || runtime.modelName || runtime.modelId || '-')
-              : i18nService.t('coworkRuntimeLocked'),
-          );
-          return true;
-        }
         openModelSelector();
         return true;
       case '/context':
@@ -942,7 +947,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         dispatch(clearSelection());
       }
     }
-  }, [activeSkillIds]);
+  }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
 
   // Handle prompt selection from QuickAction
   const handleQuickActionPromptSelect = (prompt: string) => {
@@ -978,7 +983,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     return () => {
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [currentSession?.id, currentSession?.status, isOpenClawEngine]);
+  }, [currentSession, currentSession?.id, currentSession?.status, isOpenClawEngine]);
 
   if (!isInitialized) {
     return (

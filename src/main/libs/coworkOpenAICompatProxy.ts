@@ -745,6 +745,191 @@ function convertChatCompletionsRequestToResponsesRequest(
   return request;
 }
 
+function convertResponsesContentToChatContent(content: unknown): unknown {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  const parts: Array<Record<string, unknown>> = [];
+  for (const item of toArray(content)) {
+    const itemObj = toOptionalObject(item);
+    if (!itemObj) continue;
+    const itemType = toString(itemObj.type);
+    if (itemType === 'input_text' || itemType === 'output_text' || itemType === 'text') {
+      const text = toString(itemObj.text);
+      if (text) {
+        parts.push({ type: 'text', text });
+      }
+      continue;
+    }
+    if (itemType === 'input_image') {
+      const imageURL = toString(itemObj.image_url);
+      if (imageURL) {
+        parts.push({ type: 'image_url', image_url: { url: imageURL } });
+      }
+    }
+  }
+
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return parts[0].text;
+  }
+  return parts;
+}
+
+function normalizeChatToolsFromResponses(toolsInput: unknown): Array<Record<string, unknown>> {
+  const normalizedTools: Array<Record<string, unknown>> = [];
+  for (const tool of toArray(toolsInput)) {
+    const toolObj = toOptionalObject(tool);
+    if (!toolObj || toString(toolObj.type) !== 'function') {
+      continue;
+    }
+    const name = toString(toolObj.name);
+    if (!name) {
+      continue;
+    }
+    const functionObj: Record<string, unknown> = { name };
+    const description = toString(toolObj.description);
+    if (description) {
+      functionObj.description = description;
+    }
+    if (toolObj.parameters !== undefined) {
+      functionObj.parameters = toolObj.parameters;
+    }
+    if (typeof toolObj.strict === 'boolean') {
+      functionObj.strict = toolObj.strict;
+    }
+    normalizedTools.push({
+      type: 'function',
+      function: functionObj,
+    });
+  }
+  return normalizedTools;
+}
+
+function normalizeChatToolChoiceFromResponses(toolChoice: unknown): unknown {
+  if (typeof toolChoice === 'string') {
+    if (toolChoice === 'required') return 'required';
+    if (toolChoice === 'auto' || toolChoice === 'none') return toolChoice;
+    return toolChoice;
+  }
+
+  const toolChoiceObj = toOptionalObject(toolChoice);
+  if (!toolChoiceObj) {
+    return toolChoice;
+  }
+  if (toString(toolChoiceObj.type) === 'function') {
+    const name = toString(toolChoiceObj.name);
+    if (name) {
+      return {
+        type: 'function',
+        function: { name },
+      };
+    }
+  }
+  return toolChoice;
+}
+
+function normalizeChatRoleFromResponses(role: string, itemType: string): string {
+  if (role === 'developer') return 'system';
+  if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') return role;
+  if (role === 'latest_reminder') return role;
+  if (!role && itemType === 'message') return 'user';
+  return role || 'user';
+}
+
+function convertResponsesRequestToChatCompletionsRequest(
+  responsesRequest: Record<string, unknown>,
+): Record<string, unknown> {
+  const request: Record<string, unknown> = {};
+  const messages: Array<Record<string, unknown>> = [];
+
+  if (responsesRequest.model !== undefined) {
+    request.model = responsesRequest.model;
+  }
+  if (responsesRequest.temperature !== undefined) {
+    request.temperature = responsesRequest.temperature;
+  }
+  if (responsesRequest.top_p !== undefined) {
+    request.top_p = responsesRequest.top_p;
+  }
+  if (responsesRequest.parallel_tool_calls !== undefined) {
+    request.parallel_tool_calls = responsesRequest.parallel_tool_calls;
+  }
+
+  const maxOutputTokens = toNumber(responsesRequest.max_output_tokens)
+    ?? toNumber(responsesRequest.max_completion_tokens)
+    ?? toNumber(responsesRequest.max_tokens);
+  if (maxOutputTokens !== null) {
+    request.max_tokens = maxOutputTokens;
+  }
+
+  const tools = normalizeChatToolsFromResponses(responsesRequest.tools);
+  if (tools.length > 0) {
+    request.tools = tools;
+  }
+  if (responsesRequest.tool_choice !== undefined) {
+    request.tool_choice = normalizeChatToolChoiceFromResponses(responsesRequest.tool_choice);
+  }
+
+  const instructions = toString(responsesRequest.instructions);
+  if (instructions) {
+    messages.push({ role: 'system', content: instructions });
+  }
+
+  const input = responsesRequest.input;
+  if (typeof input === 'string') {
+    messages.push({ role: 'user', content: input });
+  } else {
+    for (const item of toArray(input)) {
+      const itemObj = toOptionalObject(item);
+      if (!itemObj) continue;
+      const itemType = toString(itemObj.type);
+      if (itemType === 'function_call_output') {
+        const toolCallId = toString(itemObj.call_id);
+        const output = stringifyUnknown(itemObj.output);
+        if (toolCallId && output) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCallId,
+            content: output,
+          });
+        }
+        continue;
+      }
+      if (itemType === 'function_call') {
+        const callId = toString(itemObj.call_id) || toString(itemObj.id);
+        const name = toString(itemObj.name);
+        if (callId && name) {
+          messages.push({
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: callId,
+                type: 'function',
+                function: {
+                  name,
+                  arguments: normalizeFunctionArguments(itemObj.arguments) || '{}',
+                },
+              },
+            ],
+          });
+        }
+        continue;
+      }
+
+      const role = normalizeChatRoleFromResponses(toString(itemObj.role), itemType);
+      const content = convertResponsesContentToChatContent(itemObj.content);
+      if (role && (typeof content === 'string' ? content : toArray(content).length > 0)) {
+        messages.push({ role, content });
+      }
+    }
+  }
+
+  request.messages = messages;
+  return request;
+}
+
 function normalizeToolName(value: unknown): string {
   return toString(value).trim().toLowerCase();
 }
@@ -813,6 +998,48 @@ function remapMessageRolesForMiniMax(
     if (role === 'developer') {
       messageObj.role = 'system';
     }
+  }
+}
+
+function normalizeMiniMaxModelId(model: string): string {
+  const normalized = model.trim();
+  if (normalized.toLowerCase() === 'minimax-m3.0') {
+    return 'MiniMax-M3';
+  }
+  return normalized;
+}
+
+function normalizeProviderModelId(model: string, provider?: string): string {
+  if (provider === 'minimax') {
+    return normalizeMiniMaxModelId(model);
+  }
+  return model;
+}
+
+function getUpstreamRequestModel(config: OpenAICompatUpstreamConfig): string {
+  return normalizeProviderModelId(config.model, config.provider);
+}
+
+function remapOpenAIRequestModelToUpstream(
+  openAIRequest: Record<string, unknown>,
+  config: OpenAICompatUpstreamConfig,
+): void {
+  const upstreamModel = getUpstreamRequestModel(config);
+  if (!openAIRequest.model) {
+    openAIRequest.model = upstreamModel;
+    return;
+  }
+
+  if (!config.provider || config.provider === 'anthropic' || config.provider === 'openai') {
+    return;
+  }
+
+  const requestModel = typeof openAIRequest.model === 'string' ? openAIRequest.model : '';
+  if (requestModel !== upstreamModel) {
+    console.info(
+      `[CoworkProxy] Remapping model: ${requestModel} -> ${upstreamModel} (provider: ${config.provider})`
+    );
+    openAIRequest.model = upstreamModel;
   }
 }
 
@@ -1266,6 +1493,163 @@ function convertResponsesToOpenAIResponse(body: unknown): Record<string, unknown
       completion_tokens: toNumber(usage?.output_tokens) ?? toNumber(usage?.completion_tokens) ?? 0,
     },
   };
+}
+
+function convertOpenAIResponseToResponses(body: unknown, fallbackModel: string): Record<string, unknown> {
+  const source = toOptionalObject(body) ?? {};
+  const choice = toOptionalObject(toArray(source.choices)[0]) ?? {};
+  const message = toOptionalObject(choice.message) ?? {};
+  const output: Array<Record<string, unknown>> = [];
+  const responseId = toString(source.id) || `resp_${Date.now()}`;
+  const model = toString(source.model) || fallbackModel;
+  const content = message.content;
+  const text = typeof content === 'string'
+    ? content
+    : toArray(content)
+      .map((item) => toString(toOptionalObject(item)?.text))
+      .filter(Boolean)
+      .join('');
+
+  if (text) {
+    output.push({
+      type: 'message',
+      id: `msg_${responseId}`,
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text,
+          annotations: [],
+        },
+      ],
+    });
+  }
+
+  for (const toolCall of toArray(message.tool_calls)) {
+    const toolCallObj = toOptionalObject(toolCall);
+    const functionObj = toOptionalObject(toolCallObj?.function);
+    if (!toolCallObj || !functionObj) continue;
+    const callId = toString(toolCallObj.id) || `call_${output.length}`;
+    output.push({
+      type: 'function_call',
+      id: callId,
+      call_id: callId,
+      name: toString(functionObj.name),
+      arguments: normalizeFunctionArguments(functionObj.arguments) || '{}',
+      status: 'completed',
+    });
+  }
+
+  const usage = toOptionalObject(source.usage);
+  return {
+    id: responseId,
+    object: 'response',
+    created_at: toNumber(source.created) ?? Math.floor(Date.now() / 1000),
+    status: 'completed',
+    model,
+    output,
+    usage: {
+      input_tokens: toNumber(usage?.prompt_tokens) ?? toNumber(usage?.input_tokens) ?? 0,
+      output_tokens: toNumber(usage?.completion_tokens) ?? toNumber(usage?.output_tokens) ?? 0,
+      total_tokens: toNumber(usage?.total_tokens) ?? 0,
+    },
+  };
+}
+
+function writeResponsesSSE(res: http.ServerResponse, responseObj: Record<string, unknown>): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  emitSSE(res, 'response.created', {
+    type: 'response.created',
+    response: {
+      ...responseObj,
+      output: [],
+    },
+  });
+
+  const output = toArray(responseObj.output);
+  output.forEach((item, index) => {
+    const itemObj = toOptionalObject(item);
+    if (!itemObj) return;
+    emitSSE(res, 'response.output_item.added', {
+      type: 'response.output_item.added',
+      response_id: responseObj.id,
+      output_index: index,
+      item: itemObj,
+    });
+
+    if (toString(itemObj.type) === 'message') {
+      const content = toArray(itemObj.content);
+      content.forEach((part, contentIndex) => {
+        const partObj = toOptionalObject(part);
+        if (!partObj) return;
+        const text = toString(partObj.text);
+        emitSSE(res, 'response.content_part.added', {
+          type: 'response.content_part.added',
+          response_id: responseObj.id,
+          item_id: itemObj.id,
+          output_index: index,
+          content_index: contentIndex,
+          part: partObj,
+        });
+        if (text) {
+          emitSSE(res, 'response.output_text.delta', {
+            type: 'response.output_text.delta',
+            response_id: responseObj.id,
+            item_id: itemObj.id,
+            output_index: index,
+            content_index: contentIndex,
+            delta: text,
+          });
+          emitSSE(res, 'response.output_text.done', {
+            type: 'response.output_text.done',
+            response_id: responseObj.id,
+            item_id: itemObj.id,
+            output_index: index,
+            content_index: contentIndex,
+            text,
+          });
+        }
+        emitSSE(res, 'response.content_part.done', {
+          type: 'response.content_part.done',
+          response_id: responseObj.id,
+          item_id: itemObj.id,
+          output_index: index,
+          content_index: contentIndex,
+          part: partObj,
+        });
+      });
+    }
+
+    if (toString(itemObj.type) === 'function_call') {
+      emitSSE(res, 'response.function_call_arguments.done', {
+        type: 'response.function_call_arguments.done',
+        response_id: responseObj.id,
+        item_id: itemObj.id,
+        output_index: index,
+        call_id: itemObj.call_id,
+        arguments: toString(itemObj.arguments) || '{}',
+      });
+    }
+
+    emitSSE(res, 'response.output_item.done', {
+      type: 'response.output_item.done',
+      response_id: responseObj.id,
+      output_index: index,
+      item: itemObj,
+    });
+  });
+
+  emitSSE(res, 'response.completed', {
+    type: 'response.completed',
+    response: responseObj,
+  });
+  res.write('data: [DONE]\n\n');
+  res.end();
 }
 
 function cacheToolCallExtraContentFromResponsesResponse(body: unknown): void {
@@ -2361,6 +2745,102 @@ async function handleRequest(
   // OpenClaw sends requests to /v1/chat/completions (OpenAI format) when using
   // the lobster provider. Transparently proxy these requests to the upstream with
   // IDE headers injected (needed for GitHub Copilot).
+  if (method === 'POST' && (url.pathname === '/v1/responses' || url.pathname === '/responses')) {
+    if (!upstreamConfig) {
+      writeJSON(res, 503, createAnthropicErrorBody('Proxy not configured', 'service_unavailable'));
+      return;
+    }
+    let body = '';
+    try {
+      body = await readRequestBody(req);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid request body';
+      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
+      return;
+    }
+
+    let responsesRequest: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(body);
+      responsesRequest = toOptionalObject(parsed) ?? {};
+    } catch {
+      writeJSON(res, 400, createAnthropicErrorBody('Request body must be valid JSON', 'invalid_request_error'));
+      return;
+    }
+
+    const wantsStream = Boolean(responsesRequest.stream);
+    const chatRequest = convertResponsesRequestToChatCompletionsRequest(responsesRequest);
+    chatRequest.model = getUpstreamRequestModel(upstreamConfig);
+    chatRequest.stream = false;
+    filterOpenAIToolsForProvider(chatRequest, upstreamConfig.provider);
+    remapMessageRolesForMiniMax(chatRequest, upstreamConfig.provider);
+    hydrateOpenAIRequestToolCalls(chatRequest, upstreamConfig.provider, upstreamConfig.baseURL);
+    sanitizeToolsForGemini(chatRequest, upstreamConfig.provider, upstreamConfig.baseURL);
+    normalizeMaxTokensFieldForOpenAIProvider(chatRequest, upstreamConfig.provider);
+    mergeSystemMessagesForProvider(chatRequest);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (upstreamConfig.apiKey) {
+      if (isGeminiProvider(upstreamConfig.provider, upstreamConfig.baseURL)) {
+        headers['x-goog-api-key'] = upstreamConfig.apiKey;
+      } else {
+        headers.Authorization = `Bearer ${upstreamConfig.apiKey}`;
+      }
+    }
+    const targetURL = buildOpenAIChatCompletionsURL(upstreamConfig.baseURL);
+    console.log(`[CoworkProxy] Responses compat → ${targetURL} (provider: ${upstreamConfig.provider})`);
+
+    let upstreamResponse: Response;
+    try {
+      upstreamResponse = await session.defaultSession.fetch(targetURL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(chatRequest),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Network error';
+      lastProxyError = message;
+      writeJSON(res, 502, createAnthropicErrorBody(message));
+      return;
+    }
+
+    if (!upstreamResponse.ok) {
+      const errorText = await upstreamResponse.text();
+      const errorMessage = extractErrorMessage(errorText);
+      lastProxyError = errorMessage;
+      console.error(`[CoworkProxy] Responses compat upstream error: status=${upstreamResponse.status}, body=${errorText.slice(0, 500)}`);
+      writeJSON(res, upstreamResponse.status, {
+        error: {
+          message: errorMessage,
+          type: 'api_error',
+        },
+      });
+      return;
+    }
+
+    let upstreamJSON: unknown;
+    try {
+      upstreamJSON = await upstreamResponse.json();
+    } catch {
+      lastProxyError = 'Failed to parse upstream JSON response';
+      writeJSON(res, 502, createAnthropicErrorBody('Failed to parse upstream JSON response'));
+      return;
+    }
+
+    lastProxyError = null;
+    cacheToolCallExtraContentFromOpenAIResponse(upstreamJSON);
+    const responseObj = convertOpenAIResponseToResponses(upstreamJSON, upstreamConfig.model);
+    cacheToolCallExtraContentFromResponsesResponse(responseObj);
+    if (wantsStream) {
+      writeResponsesSSE(res, responseObj);
+    } else {
+      writeJSON(res, 200, responseObj);
+    }
+    return;
+  }
+
   if (method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
     if (!upstreamConfig) {
       writeJSON(res, 503, createAnthropicErrorBody('Proxy not configured', 'service_unavailable'));
@@ -2374,6 +2854,19 @@ async function handleRequest(
       writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
       return;
     }
+    let parsedBody: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(body);
+      parsedBody = toOptionalObject(parsed) ?? {};
+    } catch {
+      writeJSON(res, 400, createAnthropicErrorBody('Request body must be valid JSON', 'invalid_request_error'));
+      return;
+    }
+    remapOpenAIRequestModelToUpstream(parsedBody, upstreamConfig);
+    remapMessageRolesForMiniMax(parsedBody, upstreamConfig.provider);
+    normalizeMaxTokensFieldForOpenAIProvider(parsedBody, upstreamConfig.provider);
+    mergeSystemMessagesForProvider(parsedBody);
+    body = JSON.stringify(parsedBody);
     const upstreamHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -2501,21 +2994,13 @@ async function handleRequest(
   }
 
   if (!openAIRequest.model) {
-    openAIRequest.model = upstreamConfig.model;
+    openAIRequest.model = getUpstreamRequestModel(upstreamConfig);
   }
 
   // Force-remap model name to the user-configured upstream model.
   // The Claude Agent SDK may emit internal model names (e.g. claude-haiku-4-5-20251001)
   // for probe/warmup requests, which non-Anthropic providers don't recognize.
-  if (upstreamConfig.provider && upstreamConfig.provider !== 'anthropic' && upstreamConfig.provider !== 'openai') {
-    const requestModel = typeof openAIRequest.model === 'string' ? openAIRequest.model : '';
-    if (requestModel !== upstreamConfig.model) {
-      console.info(
-        `[CoworkProxy] Remapping model: ${requestModel} -> ${upstreamConfig.model} (provider: ${upstreamConfig.provider})`
-      );
-      openAIRequest.model = upstreamConfig.model;
-    }
-  }
+  remapOpenAIRequestModelToUpstream(openAIRequest, upstreamConfig);
   filterOpenAIToolsForProvider(openAIRequest, upstreamConfig.provider);
   remapMessageRolesForMiniMax(openAIRequest, upstreamConfig.provider);
   hydrateOpenAIRequestToolCalls(openAIRequest, upstreamConfig.provider, upstreamConfig.baseURL);
@@ -2768,8 +3253,12 @@ export const __openAICompatProxyTestUtils = {
   findSSEPacketBoundary,
   processResponsesStreamEvent,
   convertChatCompletionsRequestToResponsesRequest,
+  convertResponsesRequestToChatCompletionsRequest,
+  convertOpenAIResponseToResponses,
   filterOpenAIToolsForProvider,
+  normalizeProviderModelId,
   isGeminiProvider,
+  sanitizeToolsForGemini,
 };
 
 export async function startCoworkOpenAICompatProxy(): Promise<void> {

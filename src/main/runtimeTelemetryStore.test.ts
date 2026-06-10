@@ -137,6 +137,7 @@ test('uses visible output tokens for TPS when official usage includes hidden tok
   });
 
   store.markAssistantOutput('call-hidden', startedAt + 17_500);
+  store.updateAssistantEstimate('call-hidden', 45, 12);
   store.markAssistantOutput('call-hidden', startedAt + 19_000);
   store.updateAssistantEstimate('call-hidden', 91, 24);
   store.applyUsage('call-hidden', {
@@ -153,8 +154,8 @@ test('uses visible output tokens for TPS when official usage includes hidden tok
 
   const summary = store.getSummary();
   expect(summary.totalOutputTokens).toBe(1_358);
-  expect(summary.avgRuntimeTps).toBeCloseTo(15);
-  expect(summary.avgModelTps).toBeCloseTo(126.7, 1);
+  expect(summary.avgRuntimeTps).toBeCloseTo(16);
+  expect(summary.avgModelTps).toBeCloseTo(127.7, 1);
 });
 
 test('uses runtime-correlated highspeed GLM estimates within the model range', () => {
@@ -179,6 +180,8 @@ test('uses runtime-correlated highspeed GLM estimates within the model range', (
   });
 
   store.markAssistantOutput('call-glm-highspeed', startedAt + 2300);
+  store.updateAssistantEstimate('call-glm-highspeed', 80, 35);
+  store.markAssistantOutput('call-glm-highspeed', startedAt + 4500);
   store.updateAssistantEstimate('call-glm-highspeed', 159, 70);
   store.finishCall('call-glm-highspeed', RuntimeCallStatus.Completed, startedAt + 4500);
 
@@ -208,6 +211,8 @@ test('uses runtime-correlated highspeed GLM estimates within the model range', (
   });
 
   store.markAssistantOutput('call-glm-highspeed-fast', startedAt + 2400);
+  store.updateAssistantEstimate('call-glm-highspeed-fast', 80, 35);
+  store.markAssistantOutput('call-glm-highspeed-fast', startedAt + 2700);
   store.updateAssistantEstimate('call-glm-highspeed-fast', 159, 70);
   store.finishCall('call-glm-highspeed-fast', RuntimeCallStatus.Completed, startedAt + 2700);
 
@@ -216,6 +221,38 @@ test('uses runtime-correlated highspeed GLM estimates within the model range', (
   expect(calculateModelTps(fastCall)).toBeGreaterThan(calculateModelTps(slowCall) ?? 0);
   expect(calculateModelTps(fastCall)).toBeLessThanOrEqual(350);
   expect(calculateModelTps(slowCall)).toBeGreaterThanOrEqual(300);
+});
+
+test('does not calculate output-phase TPS for batch-only CLI output', () => {
+  const startedAt = Date.now() - 20_000;
+  store.createCall({
+    id: 'call-batch-output',
+    sessionId: 'session-1',
+    turnIndex: 1,
+    agentId: 'main',
+    source: RuntimeCallSource.Chat,
+    engine: CoworkAgentEngine.Codex,
+    providerKey: 'deepseek',
+    providerName: 'DeepSeek',
+    modelId: 'deepseek-reasoner',
+    modelName: 'deepseek-reasoner',
+    configSource: 'wesight_model',
+    cwd: '/tmp',
+    startedAt,
+    inputTokens: 100,
+    contextTokens: 100,
+    tokensEstimated: true,
+  });
+
+  store.markAssistantOutput('call-batch-output', startedAt + 19_500);
+  store.updateAssistantEstimate('call-batch-output', 400, 100);
+  store.finishCall('call-batch-output', RuntimeCallStatus.Completed, startedAt + 19_700);
+
+  const call = store.listCalls().calls[0];
+  expect(call.visibleOutputUpdates).toBe(1);
+  expect(calculateRuntimeTps(call)).toBeNull();
+  expect(calculateModelTps(call)).toBeCloseTo(75);
+  expect(store.getSummary().avgRuntimeTps).toBeNull();
 });
 
 test('resets running runtime calls after app restart', () => {
