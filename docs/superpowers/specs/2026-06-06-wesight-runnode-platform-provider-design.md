@@ -1,5 +1,8 @@
 # WeSight × RunNode Platform Provider Sync — Design
 
+> **Status:** Implemented (2026-06-10) — service layer (2026-06-06) + UI rendering (Sidebar 徽章 + Settings `CloudPlatformProviderSection`, 2026-06-10)
+
+
 ## Overview
 
 Sync RunNode's `new-api/config` (an OpenAI-compatible gateway with the user's unified platform API key) into WeSight's local SQLite, so engine configurations (Claude Code / Codex / OpenClaw / Hermes) can consume a single platform-key bearer in **C**. Also surface RunNode `coin` (算力币) and `subscriptionPlan` (套餐) in the renderer.

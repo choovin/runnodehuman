@@ -1667,4 +1667,115 @@ git commit -m "docs: mark platform provider spec implemented + update AGENTS.md"
 - `CloudPlatformProviderChannel.*` constants used everywhere (service, IPC handlers, preload, event emit/listen)
 - `CloudPlatformProviderRecord` IPC payload type matches across all boundaries
 
+---
+
+## Phase 2: UI Rendering (2026-06-10)
+
+Phase 1 shipped the service layer (Tasks 1-7 + IPC plumbing). Phase 2 fills the renderer side that Phase 1 left as designed-but-unbuilt tasks (Tasks 9-11): Sidebar 套餐 / 算力币 徽章 + Settings `CloudPlatformProviderSection` (effective 显示 + override inputs + 立即同步 + 恢复默认 + lastSyncedAt + isOverridden 标签).
+
+### Task 14: Settings section — `CloudPlatformProviderSection`
+
+**Files:**
+- Create: `src/renderer/components/Settings/CloudPlatformProviderSection.tsx`
+
+**Implementation notes:**
+- 拉取一次初始数据 via `window.electron.cloudPlatformProvider.get()`
+- 订阅 `onUpdate` 广播 (main process 在每次 sync / setOverride / resetDefault 后 broadcast)
+- 显示 4 个东西：
+  1. **effective baseUrl / apiKey** (read-only) — `effective(record)` 计算 override 后的实际值
+  2. **override inputs** (baseUrl / apiKey) — 留空表示"用云端值"
+  3. **action buttons** — 保存 override / 恢复默认 / 立即同步 + lastSyncedAt 时间戳
+  4. **isOverridden tag** — 当 `userOverride` 任意字段非空时显示 黄色 `已自定义` 徽章
+- apiKey 永远 masked (`xxxx••••yyyy`) 即使在 override input 也用 `type="password"`
+- 不引入新 Redux slice: 4 个 IPC 方法 + useState 够用; Redux 留给真正跨页面共享的状态
+- `data-testid` 钩子: `cloud-platform-provider-section`, `effective-base-url`, `effective-api-key`, `override-base-url`, `override-api-key`, `save-override`, `reset-default`, `sync-now`, `last-synced`, `override-tag`, `notice` (UI 测试用, 沿用 CloudApiSection 的命名风格)
+
+**Commit:** `feat(platform-provider): render Settings section for cloud platform provider`
+
+---
+
+### Task 15: Mount section in Settings general tab
+
+**Files:**
+- Modify: `src/renderer/components/Settings.tsx` (import + render)
+
+**Implementation notes:**
+- import 紧贴 `CloudApiSection` import
+- 渲染位置: 在 `CloudApiSection` 之后, 同一 `general` tab 内 — 这俩是相邻的"云端接入"概念 (baseUrl for member auth, baseUrl+apiKey for platform provider)
+- 不需要新增 top-level nav tab — 复用 `general` tab
+- 也符合 spec: "Settings / CloudPlatformProviderSection"
+
+**Commit:** `feat(settings): mount CloudPlatformProviderSection after CloudApiSection`
+
+---
+
+### Task 16: Sidebar coin + subscriptionPlan 徽章 in user menu dropdown
+
+**Files:**
+- Modify: `src/renderer/components/Sidebar.tsx` (`SidebarLoginEntry`)
+
+**Implementation notes:**
+- 在下拉菜单顶部 (border-bottom 之上) 加 header: `displayName` + 下方一行小字
+- 套餐: primary 色调 chip (从 `cloudAuthSlice.user.subscriptionPlan` 读, 来自 A spec 的 `getStatus()`)
+- 算力币: `i18nService.t('authCoinLabel') + number.toLocaleString()` (从 `cloudAuthSlice.user.coin` 读)
+- 任一字段缺失时隐藏对应部分 (用户可能登录但 coin 拉取失败, 不要显示 "undefined")
+- 不画 spec 里的"sidebar 数字徽章" — 因为 sidebar 已经被 user entry 占用, 在 user entry 内的小字更符合现有 UX
+
+**Commit:** `feat(sidebar): show subscription plan + coin count in user menu`
+
+---
+
+### Task 17: i18n keys (zh + en)
+
+**Files:**
+- Modify: `src/renderer/services/i18n.ts`
+
+**Keys added (zh / en):**
+- `authCoinLabel` / `authCoinLabel` — "算力币" / "Coins"
+- `authPlanLabel` / `authPlanLabel` — "套餐" / "Plan"
+- `authCloudProviderSectionTitle` — "云端模型 API" / "Cloud Model API"
+- `authCloudProviderSectionDesc` — RunNode OpenAI 兼容网关说明
+- `authCloudProviderEffectiveBaseUrl` / `Effective apiKey`
+- `authCloudProviderOverrideBaseUrl` / `Override apiKey`
+- `authCloudProviderOverrideHint`
+- `authCloudProviderResetDefault` — "恢复默认" / "Reset to default"
+- `authCloudProviderSyncNow` / `Syncing` — "立即同步" / "Sync now" / "Syncing…"
+- `authCloudProviderOverrideTag` — "已自定义" / "Overridden"
+- `authCloudProviderLastSynced` / `Not synced yet`
+
+**Commit:** `i18n: keys for cloud platform provider UI`
+
+---
+
+### Task 18: Spec status flip + AGENTS.md update
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-06-06-wesight-runnode-platform-provider-design.md`
+- Modify: `AGENTS.md`
+
+**Status line:**
+```
+> **Status:** Implemented (2026-06-10) — service layer (2026-06-06) + UI rendering (Sidebar 徽章 + Settings CloudPlatformProviderSection, 2026-06-10)
+```
+
+**AGENTS.md**: 已有 B 节段 (写于 Phase 1 commit 1a6d99c), 改写为完整: 服务层 + UI 入口都写上.
+
+**Commit:** `docs: mark platform provider spec fully implemented (with UI)`
+
+---
+
+## Phase 2 Self-Review
+
+| Spec section | Phase 2 implementation |
+|---|---|
+| "Sidebar 徽章" | Task 16 — `SidebarLoginEntry` 菜单顶部加 plan + coin |
+| "Settings detail: effective 显示" | Task 14 — read-only inputs |
+| "Settings detail: baseUrl / apiKey 输入" | Task 14 — override inputs |
+| "Settings detail: override + 恢复默认" | Task 14 — buttons + handler |
+| "Settings detail: 立即同步" | Task 14 — sync button + IPC |
+| "Settings detail: lastSyncedAt" | Task 14 — footer timestamp |
+| "Settings detail: isOverridden 标签" | Task 14 — amber chip when override set |
+
+All spec display requirements now covered. 100% Implemented.
+
 No inconsistencies found. Ready to execute.

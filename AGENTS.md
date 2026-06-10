@@ -4,14 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Authentication
 
-WeSight now uses RunNode member auth (not URS OAuth). See `docs/superpowers/specs/2026-06-05-wesight-runnode-user-auth-design.md`. Code lives in:
-- `src/main/services/cloudAuth.ts`
-- `src/main/services/cloudAuthTokenStore.ts` (SQLCipher)
-- `src/main/services/cloudUserDeviceService.ts` (main-process heartbeat)
-- `src/renderer/services/cloudAuth.ts`
-- `src/renderer/store/slices/cloudAuthSlice.ts`
-- `src/renderer/components/LoginGate.tsx`
-- `src/renderer/components/LoginModal.tsx`
+WeSight uses RunNode member auth (not URS OAuth). Two layered subsystems:
+
+**A — User system** (login, device, token). Spec: `docs/superpowers/specs/2026-06-05-wesight-runnode-user-auth-design.md`. Code:
+- `src/main/services/cloudAuth.ts` + `cloudAuthTokenStore.ts` (SQLCipher) + `cloudUserDeviceService.ts` (heartbeat)
+- `src/renderer/services/cloudAuth.ts` + `src/renderer/store/slices/cloudAuthSlice.ts` (`coin` + `subscriptionPlan` fields)
+- `src/renderer/components/LoginGate.tsx` + `LoginModal.tsx` + Sidebar's `SidebarLoginEntry` (shows plan + coin in menu)
+
+**B — Platform provider sync** (RunNode's `new-api/config`: baseUrl + apiKey, hybrid override model). Spec: `docs/superpowers/specs/2026-06-06-wesight-runnode-platform-provider-design.md`. Code:
+- `src/shared/cloudPlatformProvider/` (types, constants, parsers)
+- `src/main/services/cloudPlatformProviderStore.ts` (SQLCipher kv) + `cloudPlatformProviderService.ts` (sync/24h/override/resetDefault)
+- IPC: `registerCloudPlatformProviderHandlers` in `src/main/ipcHandlers/cloudAuth.ts`; preload exposure in `src/main/preload.ts`
+- Renderer: `src/renderer/components/Settings/CloudPlatformProviderSection.tsx` (effective 显示 + override inputs + 立即同步 + 恢复默认)
 
 ## Build and Development Commands
 
