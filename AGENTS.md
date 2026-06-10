@@ -31,6 +31,14 @@ npm run build
 
 # Lint with ESLint
 npm run lint
+```
+
+> ⚠️ **Single-instance lock**: WeSight's `main.ts` calls `app.requestSingleInstanceLock()` (line 3211). If a previously-installed WeSight.app instance is still running, `npm run electron:dev` will exit silently with code 0 via `app.quit()` — no error, no log. Always quit any running WeSight before starting dev mode:
+> ```bash
+> osascript -e 'tell application "WeSight" to quit'
+> # or: pkill -f "/Applications/WeSight.app"
+> ```
+> Verify with `ps -ef | grep WeSight | grep -v grep` — if non-empty, dev mode will silently fail.
 
 # Run memory extractor tests (Node.js built-in test runner)
 npm run test:memory
