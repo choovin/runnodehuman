@@ -199,6 +199,7 @@ import { stripQuarantineIfNeeded } from './runtimeHealth';
 import { RuntimeResolver } from './runtimeResolver';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { CloudPlatformProviderService } from './services/cloudPlatformProviderService';
+import { CloudPlatformProviderChannel } from '../shared/cloudPlatformProvider/constants';
 import { effective } from '../shared/cloudPlatformProvider/types';
 import { ENGINE_MODEL_DEFAULT, setPlatformProviderResolver } from './libs/platformProviderResolver';
 import { CoworkAgentEngine as CoworkAgentEngineType } from '../shared/cowork/constants';
@@ -7482,6 +7483,26 @@ if (!gotTheLock) {
         model: ENGINE_MODEL_DEFAULT[engine] ?? '',
         apiType: 'openai',
       };
+    });
+
+    // C spec, Task 4: re-apply the current engine's config when the
+    // platform-provider record changes. Triggered on:
+    //   - user login (A spec onLoginSuccess -> B spec sync())
+    //   - user logout (no event, but B service emits UpdatedEvent on resetDefault)
+    //   - 24h background sync (B spec internal timer)
+    //   - user manual sync from Settings/CloudPlatformProviderSection
+    //
+    // The re-apply goes through the legacy dispatch function which checks
+    // the new resolver first (Task 5/6/7). If the engine is OpenClaw,
+    // applyExternalAgentConfigSourceForEngine no-ops (OpenClaw is synced
+    // by ensureOpenClawRunningForCowork before each task starts).
+    cloudBroadcaster.on(CloudPlatformProviderChannel.UpdatedEvent, () => {
+      try {
+        const engine = getCoworkStore().getConfig().agentEngine;
+        applyExternalAgentConfigSourceForEngine(engine);
+      } catch (err) {
+        console.error('[PlatformProvider] failed to re-apply engine config on update:', err);
+      }
     });
 
     // Bundled runtime resolver (8 runtimes shipped inside the installer).
